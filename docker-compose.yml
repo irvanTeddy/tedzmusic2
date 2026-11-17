@@ -1,8 +1,10 @@
 services:
   innertube-api:
     build: ./innertube
-    container_name: music-innertube
+    container_name: music-app-innertube-api
     restart: unless-stopped
+    ports:
+      - "3002:3001"
     environment:
       - PORT=3001
     networks:
