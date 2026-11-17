@@ -7,4 +7,10 @@ export default defineConfig({
     vue(),
     tailwindcss(),
   ],
+  // Tambahkan konfigurasi di bawah ini untuk memastikan path produksi aman
+  base: './',
+  server: {
+    port: 80,
+    host: true,
+  },
 })
