@@ -9,8 +9,6 @@ services:
       resources:
         limits:
           memory: 256M
-    networks:
-      - music-net
 
   frontend-web:
     build: ./frontend
@@ -20,9 +18,3 @@ services:
       resources:
         limits:
           memory: 128M
-    networks:
-      - music-net
-
-networks:
-  music-net:
-    external: true
