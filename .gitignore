@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+/backend/vendor/
+/innertube/node_modules/
+/frontend/node_modules/
+
+# Build & Cache
+/frontend/dist/
+/frontend/dev-dist/
+.vite/
+*.log
+npm-debug.log*
+
+# Environment & Database Lokal
+.env
+/backend/.env
+/backend/database/*.sqlite
+/backend/storage/*.key
+/backend/storage/logs/*.log
+
+# OS & Editor
+.DS_Store
+Thumbs.db
