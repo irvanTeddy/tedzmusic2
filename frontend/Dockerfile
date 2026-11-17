@@ -4,6 +4,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
+
+# Tambahkan baris ini agar VITE_API_URL terbaca saat build
+ARG VITE_API_URL
+ENV VITE_API_URL=$VITE_API_URL
+
 RUN npm run build
 
 # Tahap Production dengan Nginx
