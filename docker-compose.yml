@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   innertube-api:
     build: ./innertube
@@ -5,6 +7,8 @@ services:
     restart: unless-stopped
     environment:
       - PORT=3001
+    networks:
+      - music-net
     deploy:
       resources:
         limits:
@@ -14,7 +18,15 @@ services:
     build: ./frontend
     container_name: music-frontend
     restart: unless-stopped
+    ports:
+      - "8015:80"
+    networks:
+      - music-net
     deploy:
       resources:
         limits:
           memory: 128M
+
+networks:
+  music-net:
+    external: true
