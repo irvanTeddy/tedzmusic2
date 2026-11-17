@@ -300,11 +300,12 @@ export const usePlayerStore = defineStore('player', () => {
             loadedVideoId = track.video_id
             
             ytPlayer.mute() // Mute secara instan sebelum potong audio
+            ytPlayer.stopVideo() // Bersihkan sisa lagu sebelumnya
             
-            // Beri jeda 100ms agar Iframe bungkam sebelum memuat lagu baru
+            // Beri jeda 150ms agar Iframe bungkam sebelum memuat lagu baru
             setTimeout(() => {
                 ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: 0 })
-            }, 100)
+            }, 150)
         }
     }
 
@@ -316,9 +317,11 @@ export const usePlayerStore = defineStore('player', () => {
         loadedVideoId = t.video_id
         
         ytPlayer.mute() 
+        ytPlayer.stopVideo() // Bersihkan sisa lagu sebelumnya
+        
         setTimeout(() => {
             ytPlayer.loadVideoById({ videoId: t.video_id, startSeconds: start })
-        }, 100)
+        }, 150)
     }
 
     function togglePlay() {
