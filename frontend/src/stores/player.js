@@ -157,6 +157,10 @@ export const usePlayerStore = defineStore('player', () => {
                         errorStreak = 0
                         isPlaying.value = true
                         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
+                        
+                        // KEMBALIKAN VOLUME SETELAH LAGU MULAI (Menghilangkan pop sound)
+                        ytPlayer.setVolume(isMuted.value ? 0 : volume.value)
+
                         duration.value = ytPlayer.getDuration() || currentTrack.value?.duration || 0
                         startProgressLoop()
                     } else if (event.data === window.YT.PlayerState.PAUSED) {
@@ -291,7 +295,7 @@ export const usePlayerStore = defineStore('player', () => {
 
         if (ytPlayer && isReady.value) {
             loadedVideoId = track.video_id
-            // OPTIMASI: Hapus ytPlayer.playVideo() setelah ini. loadVideoById sudah memutar otomatis
+            ytPlayer.setVolume(0) // Mute sesaat sebelum ganti lagu
             ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: 0 })
         }
     }
@@ -302,7 +306,7 @@ export const usePlayerStore = defineStore('player', () => {
         if (!t || !ytPlayer || !isReady.value) return
         updateMediaSession(t)
         loadedVideoId = t.video_id
-        // OPTIMASI: Sama seperti di playTrack, hindari pemanggilan ganda
+        ytPlayer.setVolume(0) // Mute sesaat sebelum ganti lagu
         ytPlayer.loadVideoById({ videoId: t.video_id, startSeconds: start })
     }
 
