@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   innertube-api:
     build: ./innertube
