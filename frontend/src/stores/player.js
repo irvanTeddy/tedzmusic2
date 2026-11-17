@@ -13,6 +13,7 @@ function readJson(key, fallback) {
         return fallback
     }
 }
+
 function writeJson(key, value) {
     try {
         localStorage.setItem(key, JSON.stringify(value))
@@ -93,6 +94,28 @@ export const usePlayerStore = defineStore('player', () => {
         errorTimer = setTimeout(() => (playbackError.value = null), 5000)
     }
 
+    /* ---------- Kontrol Media Lock Screen HP & Tombol Media Keyboard ---------- */
+    function updateMediaSession(track) {
+        if (!('mediaSession' in navigator) || !track) return
+
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: track.title,
+            artist: track.artist,
+            album: 'TedzMusic',
+            artwork: track.thumbnail_url
+                ? [{ src: track.thumbnail_url, sizes: '512x512', type: 'image/jpeg' }]
+                : []
+        })
+
+        navigator.mediaSession.setActionHandler('play', () => togglePlay())
+        navigator.mediaSession.setActionHandler('pause', () => togglePlay())
+        navigator.mediaSession.setActionHandler('previoustrack', () => playPrev())
+        navigator.mediaSession.setActionHandler('nexttrack', () => playNext())
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+            if (details.seekTime !== undefined) seekTo(details.seekTime)
+        })
+    }
+
     // Inisialisasi Headless YouTube IFrame API
     function initYouTubePlayer(elementId = 'yt-hidden-player') {
         if (window.YT && window.YT.Player) {
@@ -133,10 +156,12 @@ export const usePlayerStore = defineStore('player', () => {
                     if (event.data === window.YT.PlayerState.PLAYING) {
                         errorStreak = 0
                         isPlaying.value = true
+                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
                         duration.value = ytPlayer.getDuration() || currentTrack.value?.duration || 0
                         startProgressLoop()
                     } else if (event.data === window.YT.PlayerState.PAUSED) {
                         isPlaying.value = false
+                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
                         stopProgressLoop()
                         saveSession()
                     } else if (event.data === window.YT.PlayerState.ENDED) {
@@ -145,6 +170,7 @@ export const usePlayerStore = defineStore('player', () => {
                             // Timer tidur "akhir lagu ini": berhenti di sini
                             stopAfterTrack.value = false
                             isPlaying.value = false
+                            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
                             currentTime.value = 0
                             loadedVideoId = ''
                             saveSession()
@@ -168,6 +194,7 @@ export const usePlayerStore = defineStore('player', () => {
                     if (errorStreak >= 3 || queue.value.length <= 1) {
                         errorStreak = 0
                         isPlaying.value = false
+                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
                         stopProgressLoop()
                         flashError('Lagu tidak bisa diputar. Coba lagu lain atau periksa koneksi internetmu.')
                         return
@@ -259,6 +286,7 @@ export const usePlayerStore = defineStore('player', () => {
         pushRecent(track)
         currentTime.value = 0
         duration.value = track.duration || 0
+        updateMediaSession(track)
         saveSession()
 
         if (ytPlayer && isReady.value) {
@@ -272,6 +300,7 @@ export const usePlayerStore = defineStore('player', () => {
     function loadCurrent(start = 0) {
         const t = currentTrack.value
         if (!t || !ytPlayer || !isReady.value) return
+        updateMediaSession(t)
         loadedVideoId = t.video_id
         ytPlayer.loadVideoById({ videoId: t.video_id, startSeconds: start })
         ytPlayer.playVideo()
@@ -330,6 +359,7 @@ export const usePlayerStore = defineStore('player', () => {
         if (idx === -1) {
             // Akhir antrean tanpa "ulangi semua": berhenti dan kembali ke awal lagu
             isPlaying.value = false
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
             currentTime.value = 0
             if (ytPlayer && isReady.value) ytPlayer.stopVideo()
             loadedVideoId = ''
@@ -402,6 +432,7 @@ export const usePlayerStore = defineStore('player', () => {
             if (!queue.value.length) {
                 currentIndex.value = -1
                 isPlaying.value = false
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
                 currentTime.value = 0
                 duration.value = 0
                 if (ytPlayer && isReady.value) ytPlayer.stopVideo()
