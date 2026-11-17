@@ -158,8 +158,11 @@ export const usePlayerStore = defineStore('player', () => {
                         isPlaying.value = true
                         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
                         
-                        // KEMBALIKAN VOLUME SETELAH LAGU MULAI (Menghilangkan pop sound)
-                        ytPlayer.setVolume(isMuted.value ? 0 : volume.value)
+                        // KEMBALIKAN VOLUME SETELAH LAGU MULAI JALAN (Bypass pop sound)
+                        if (!isMuted.value) {
+                            ytPlayer.unMute()
+                            ytPlayer.setVolume(volume.value)
+                        }
 
                         duration.value = ytPlayer.getDuration() || currentTrack.value?.duration || 0
                         startProgressLoop()
@@ -295,8 +298,13 @@ export const usePlayerStore = defineStore('player', () => {
 
         if (ytPlayer && isReady.value) {
             loadedVideoId = track.video_id
-            ytPlayer.setVolume(0) // Mute sesaat sebelum ganti lagu
-            ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: 0 })
+            
+            ytPlayer.mute() // Mute secara instan sebelum potong audio
+            
+            // Beri jeda 100ms agar Iframe bungkam sebelum memuat lagu baru
+            setTimeout(() => {
+                ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: 0 })
+            }, 100)
         }
     }
 
@@ -306,8 +314,11 @@ export const usePlayerStore = defineStore('player', () => {
         if (!t || !ytPlayer || !isReady.value) return
         updateMediaSession(t)
         loadedVideoId = t.video_id
-        ytPlayer.setVolume(0) // Mute sesaat sebelum ganti lagu
-        ytPlayer.loadVideoById({ videoId: t.video_id, startSeconds: start })
+        
+        ytPlayer.mute() 
+        setTimeout(() => {
+            ytPlayer.loadVideoById({ videoId: t.video_id, startSeconds: start })
+        }, 100)
     }
 
     function togglePlay() {
