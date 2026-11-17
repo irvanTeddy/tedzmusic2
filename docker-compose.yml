@@ -20,6 +20,8 @@ services:
     restart: unless-stopped
     ports:
       - "8015:80"
+    environment:
+      - VITE_API_URL=https://api-music.irvanteddy.my.id
     networks:
       - music-net
     deploy:
