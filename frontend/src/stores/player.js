@@ -291,8 +291,8 @@ export const usePlayerStore = defineStore('player', () => {
 
         if (ytPlayer && isReady.value) {
             loadedVideoId = track.video_id
-            ytPlayer.loadVideoById(track.video_id)
-            ytPlayer.playVideo()
+            // OPTIMASI: Hapus ytPlayer.playVideo() setelah ini. loadVideoById sudah memutar otomatis
+            ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: 0 })
         }
     }
 
@@ -302,8 +302,8 @@ export const usePlayerStore = defineStore('player', () => {
         if (!t || !ytPlayer || !isReady.value) return
         updateMediaSession(t)
         loadedVideoId = t.video_id
+        // OPTIMASI: Sama seperti di playTrack, hindari pemanggilan ganda
         ytPlayer.loadVideoById({ videoId: t.video_id, startSeconds: start })
-        ytPlayer.playVideo()
     }
 
     function togglePlay() {
@@ -325,7 +325,7 @@ export const usePlayerStore = defineStore('player', () => {
         const ids = queue.value.map(t => t.video_id).filter(id => id !== currentId)
         for (let i = ids.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1))
-                ;[ids[i], ids[j]] = [ids[j], ids[i]]
+            ;[ids[i], ids[j]] = [ids[j], ids[i]]
         }
         shuffleBag = ids
         shuffleStarted = true
