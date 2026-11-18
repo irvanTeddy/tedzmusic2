@@ -135,17 +135,18 @@ export const usePlayerStore = defineStore('player', () => {
     function fade(from, to, ms, done) {
         clearFade()
         if (!ytPlayer || !isReady.value) return done?.()
-        // Tab di latar belakang: browser memperlambat timer, jadi lewati animasi
-        if (document.hidden || ms <= 0) {
+        if (ms <= 0) {
             applyVol(to)
             return done?.()
         }
-        const steps = Math.max(1, Math.round(ms / 16))
-        let i = 0
+        // Berbasis waktu, bukan jumlah langkah: di latar belakang / layar kunci browser bisa
+        // memperlambat timer, tapi volume tetap mengikuti kurva waktu dan fade selesai tepat waktu.
+        // (Dulu fade dilewati saat halaman tersembunyi, sehingga ganti lagu dari layar kunci memotong audio mentah.)
+        const start = performance.now()
         fadeTimer = setInterval(() => {
-            i++
-            applyVol(Math.round(from + (to - from) * smooth(i / steps)))
-            if (i >= steps) {
+            const t = Math.min(1, (performance.now() - start) / ms)
+            applyVol(Math.round(from + (to - from) * smooth(t)))
+            if (t >= 1) {
                 clearFade()
                 done?.()
             }
@@ -465,11 +466,11 @@ export const usePlayerStore = defineStore('player', () => {
             loadTimer = null
             loadedVideoId = track.video_id
             userPaused = false
-            pendingFadeIn = !document.hidden
-            applyVol(pendingFadeIn ? 0 : volume.value)
+            pendingFadeIn = true
+            applyVol(0)
             ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: start })
         }
-        if (isPlaying.value && !document.hidden) {
+        if (isPlaying.value) {
             fade(liveVol, 0, FADE_OUT_MS, () => {
                 loadTimer = setTimeout(load, SILENCE_MS)
             })
