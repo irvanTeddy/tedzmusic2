@@ -268,6 +268,62 @@ watch(
   }
 )
 
+/* Cover layar penuh: dipramuat & didecode dulu agar pergantian tidak "jedug" */
+const shownCover = ref(null) // { id, url } yang sedang tampil
+const preloaded = new Map() // url -> { img, p }
+
+function preloadImage(url) {
+  if (!url) return Promise.resolve()
+  if (!preloaded.has(url)) {
+    const img = new Image()
+    img.src = url
+    const p = (img.decode ? img.decode() : new Promise(r => (img.onload = r))).catch(() => {})
+    preloaded.set(url, { img, p }) // img disimpan agar hasil decode tidak dibuang
+    if (preloaded.size > 40) preloaded.delete(preloaded.keys().next().value)
+  }
+  return preloaded.get(url).p
+}
+
+let coverSeq = 0
+watch(
+  () => player.currentTrack?.video_id,
+  async () => {
+    const t = player.currentTrack
+    const seq = ++coverSeq
+    if (!t) {
+      shownCover.value = null
+      return
+    }
+    // Tunggu gambar siap, maksimal 700 ms supaya jaringan lambat tidak menahan tampilan
+    await Promise.race([preloadImage(t.thumbnail_url), new Promise(r => setTimeout(r, 700))])
+    if (seq !== coverSeq) return
+    shownCover.value = { id: t.video_id, url: t.thumbnail_url }
+  },
+  { immediate: true }
+)
+
+// Pramuat cover lagu di sekitar lagu yang sedang diputar
+watch(
+  () => [player.currentIndex, player.queue.length],
+  () => {
+    const q = player.queue
+    const i = player.currentIndex
+    ;[q[i + 1], q[i - 1], q[i + 2]].forEach(t => t && preloadImage(t.thumbnail_url))
+  },
+  { immediate: true }
+)
+
+// Skala cover tidak menyusut untuk jeda singkat saat lagu berganti
+const coverPlaying = ref(player.isPlaying)
+let coverTimer
+watch(
+  () => player.isPlaying,
+  v => {
+    clearTimeout(coverTimer)
+    coverTimer = setTimeout(() => (coverPlaying.value = v), v ? 0 : 350)
+  }
+)
+
 /* ==========================================================
    LIRIK (LRCLIB, gratis tanpa API key)
    ========================================================== */
@@ -851,6 +907,7 @@ function teardownPwa() {
   window.removeEventListener('appinstalled', onInstalled)
   clearInterval(sleepTimerId)
   clearTimeout(toastTimer)
+  clearTimeout(coverTimer)
 }
 
 // Daftar yang bisa digeser ke samping: dukung drag mouse & roda mouse (layar sentuh sudah bawaan)
@@ -1104,7 +1161,7 @@ watch(
                 v-if="player.currentTrack"
                 :key="player.currentTrack.video_id"
                 :src="player.currentTrack.thumbnail_url"
-                class="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-40 saturate-150"
+                class="ambient-blur opacity-40"
               />
             </Transition>
             <div class="absolute inset-0 bg-linear-to-b from-transparent via-[#0e1814]/70 to-[#0e1814]"></div>
@@ -1841,9 +1898,10 @@ watch(
       >
         <Transition name="ambient">
           <img
-            :key="player.currentTrack.video_id"
-            :src="player.currentTrack.thumbnail_url"
-            class="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-60 saturate-150 pointer-events-none"
+            v-if="shownCover"
+            :key="shownCover.id"
+            :src="shownCover.url"
+            class="ambient-blur opacity-60 pointer-events-none"
           />
         </Transition>
         <div class="absolute inset-0 bg-linear-to-b from-black/10 via-black/50 to-black/90 pointer-events-none"></div>
@@ -1860,21 +1918,20 @@ watch(
           </div>
 
           <div class="flex-1 min-h-0 py-4 flex items-center justify-center overflow-hidden">
-            <!-- Bingkai tetap (skala mengikuti putar/jeda); cover di dalamnya bergeser mengikuti arah lagu -->
             <div
               :style="coverSize"
               :class="[
-                'relative max-w-full aspect-square rounded-lg bg-white/5 shadow-2xl shadow-black/60 transition-transform duration-500',
-                player.isPlaying ? 'scale-100' : 'scale-90'
+                'relative max-w-full aspect-square rounded-lg overflow-hidden bg-[#16251e] shadow-2xl shadow-black/60 transition-transform duration-500 ease-out',
+                coverPlaying ? 'scale-100' : 'scale-90'
               ]"
             >
               <Transition :name="coverDir === 'prev' ? 'cover-prev' : 'cover-next'">
                 <img
-                  :key="player.currentTrack.video_id"
-                  :src="player.currentTrack.thumbnail_url"
+                  v-if="shownCover"
+                  :key="shownCover.id"
+                  :src="shownCover.url"
                   :alt="player.currentTrack.title"
-                  decoding="async"
-                  class="absolute inset-0 w-full h-full object-cover rounded-lg"
+                  class="absolute inset-0 w-full h-full object-cover"
                 />
               </Transition>
             </div>
@@ -2423,25 +2480,37 @@ watch(
   opacity: 0;
 }
 
-/* Pergantian cover di layar penuh: bergeser sambil memudar, searah gestur */
+/* Cover bergeser seperti carousel, tanpa opasitas, jadi tidak ada kilatan gelap */
 .cover-next-enter-active,
 .cover-next-leave-active,
 .cover-prev-enter-active,
 .cover-prev-leave-active {
-  transition:
-    transform 0.38s cubic-bezier(0.22, 0.8, 0.28, 1),
-    opacity 0.38s ease;
-  will-change: transform, opacity;
+  transition: transform 0.4s cubic-bezier(0.22, 0.8, 0.28, 1);
+  will-change: transform;
+  backface-visibility: hidden;
 }
 .cover-next-enter-from,
 .cover-prev-leave-to {
-  transform: translateX(48px) scale(0.94);
-  opacity: 0;
+  transform: translate3d(100%, 0, 0);
 }
 .cover-next-leave-to,
 .cover-prev-enter-from {
-  transform: translateX(-48px) scale(0.94);
-  opacity: 0;
+  transform: translate3d(-100%, 0, 0);
+}
+
+/* Blur murah: gambar dirender kecil (1/16 piksel), diblur, lalu diperbesar 6x.
+   Tampilannya mirip scale-150 + blur-3xl, tapi jauh lebih ringan di HP. */
+.ambient-blur {
+  position: absolute;
+  left: 37.5%;
+  top: 37.5%;
+  width: 25%;
+  height: 25%;
+  object-fit: cover;
+  transform: scale(6);
+  filter: blur(12px) saturate(1.5);
+  will-change: opacity;
+  backface-visibility: hidden;
 }
 
 /* Fade atas-bawah pada daftar lirik */
