@@ -1779,9 +1779,9 @@ watch(
           <p class="relative text-[11px] uppercase tracking-[0.2em] font-bold text-white/70">Sedang diputar</p>
 
           <template v-if="player.currentTrack">
-            <div class="relative px-2 pt-2">
-              <Transition name="swap" mode="out-in">
-                <div :key="player.currentTrack.video_id" class="relative">
+            <div class="relative grid grid-cols-[minmax(0,1fr)] px-2 pt-2">
+              <Transition name="swap" :duration="300">
+                <div :key="player.currentTrack.video_id" class="relative col-start-1 row-start-1">
                   <img :src="player.currentTrack.thumbnail_url" aria-hidden="true" class="cover-glow" />
                   <img
                     :src="player.currentTrack.thumbnail_url"
@@ -1794,12 +1794,14 @@ watch(
 
             <div class="relative flex items-start gap-2 mt-1">
               <div class="min-w-0 flex-1">
-                <Transition name="swap" mode="out-in">
-                  <div :key="player.currentTrack.video_id">
-                    <h3 class="text-2xl font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
-                    <p class="text-white/70 font-medium truncate mt-1">{{ player.currentTrack.artist }}</p>
-                  </div>
-                </Transition>
+                <div class="grid grid-cols-[minmax(0,1fr)]">
+                  <Transition name="swap" :duration="300">
+                    <div :key="player.currentTrack.video_id" class="col-start-1 row-start-1 min-w-0">
+                      <h3 class="text-2xl font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
+                      <p class="text-white/70 font-medium truncate mt-1">{{ player.currentTrack.artist }}</p>
+                    </div>
+                  </Transition>
+                </div>
               </div>
               <button @click="player.toggleLike(player.currentTrack)" aria-label="Sukai lagu" class="glass w-10 h-10 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition">
                 <Heart :class="['w-5 h-5 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-white']" />
@@ -2103,12 +2105,14 @@ watch(
           <!-- Judul + suka -->
           <div class="shrink-0 flex items-center gap-3">
             <div class="flex-1 min-w-0">
-              <Transition name="swap" mode="out-in">
-                <div :key="player.currentTrack.video_id">
-                  <h3 class="text-[1.65rem] font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
-                  <p class="text-white/70 font-medium truncate mt-0.5">{{ player.currentTrack.artist }}</p>
-                </div>
-              </Transition>
+              <div class="grid grid-cols-[minmax(0,1fr)]">
+                <Transition name="swap" :duration="300">
+                  <div :key="player.currentTrack.video_id" class="col-start-1 row-start-1 min-w-0">
+                    <h3 class="text-[1.65rem] font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
+                    <p class="text-white/70 font-medium truncate mt-0.5">{{ player.currentTrack.artist }}</p>
+                  </div>
+                </Transition>
+              </div>
             </div>
             <button @click="player.toggleLike(player.currentTrack)" class="glass w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition shrink-0" aria-label="Sukai lagu">
               <Heart :class="['w-6 h-6 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b] scale-110' : 'text-white']" />
@@ -2652,23 +2656,29 @@ watch(
 
 /* Ganti lagu: cover baru memudar masuk di atas yang lama (tanpa slide, tanpa kilatan gelap) */
 .cover-fade-enter-active {
-  transition: opacity 0.35s ease;
+  transition: opacity 0.4s ease, transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
   z-index: 1;
+  will-change: opacity, transform;
 }
 .cover-fade-leave-active {
   z-index: 0;
 }
 .cover-fade-enter-from {
   opacity: 0;
+  transform: scale(1.05);
 }
-/* Judul / artis: pudar keluar lalu pudar masuk */
+/* Judul / artis / cover desktop: lama dan baru berganti bersamaan (crossfade) + geser 6px */
 .swap-enter-active,
 .swap-leave-active {
-  transition: opacity 0.16s ease;
+  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.swap-enter-from,
+.swap-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
+}
 .swap-leave-to {
   opacity: 0;
+  transform: translate3d(0, -6px, 0);
 }
 
 /* Muncul halus saat beranda dimuat (satu kali, ringan) */
