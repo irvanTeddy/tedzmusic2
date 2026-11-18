@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { Innertube, UniversalCache } from 'youtubei.js';
+import { Readable } from 'stream'; // <-- TAMBAHAN BARU UNTUK BIKIN PIPA
 
 const app = express();
 const PORT = 3001;
@@ -62,31 +63,51 @@ app.get('/search', async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINT BARU: DIRECT BYPASS (JURUS PAMUNGKAS)
+// ENDPOINT BARU: EFFICIENT PROXY PIPING
 // ==========================================
 app.get('/stream', async (req, res) => {
     try {
         const videoId = req.query.id;
         if (!videoId) return res.status(400).json({ error: 'ID lagu tidak diberikan' });
 
-        // 1. Dapatkan info lagu dari YouTube
         const info = await yt.getBasicInfo(videoId);
-        
-        // 2. Pilih format MP4 AAC
         const format = info.chooseFormat({ type: 'audio', format: 'mp4', quality: 'best' });
 
         if (!format || !format.url) {
             return res.status(404).json({ error: 'Format audio tidak ditemukan' });
         }
 
-        // 3. JURUS PAMUNGKAS:
-        // Arahkan (Redirect) HP pengguna langsung ke server asli Google/YouTube!
-        // Ini akan membereskan semua masalah "bisu" dan "range request".
-        res.redirect(format.url);
+        // 1. Siapkan corong minta ke YouTube
+        const fetchHeaders = {};
+        if (req.headers.range) {
+            fetchHeaders.Range = req.headers.range; // Teruskan permintaan "seek" dari HP
+        }
+
+        // 2. Buka keran dari YouTube
+        const ytRes = await fetch(format.url, { headers: fetchHeaders });
+
+        // 3. Info ke HP: "Ini lagunya mulai ngalir ya"
+        res.status(ytRes.status);
+        const headersToPass = ['content-type', 'content-length', 'content-range', 'accept-ranges'];
+        headersToPass.forEach(h => {
+            if (ytRes.headers.has(h)) {
+                res.setHeader(h, ytRes.headers.get(h));
+            }
+        });
+
+        // 4. SAMBUNGKAN PIPA: YouTube -> VPS -> HP (Otomatis & Aman dari Memory Leak)
+        Readable.fromWeb(ytRes.body).pipe(res);
+
+        // 5. Kalau aplikasi di HP ditutup, matikan keran biar kuota VPS hemat!
+        req.on('close', () => {
+            res.end();
+        });
 
     } catch (error) {
         console.error('Stream error:', error);
-        res.status(500).json({ error: 'Gagal mengambil audio' });
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Gagal mengambil audio' });
+        }
     }
 });
 // ==========================================
