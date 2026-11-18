@@ -313,16 +313,6 @@ watch(
   { immediate: true }
 )
 
-// Skala cover tidak menyusut untuk jeda singkat saat lagu berganti
-const coverPlaying = ref(player.isPlaying)
-let coverTimer
-watch(
-  () => player.isPlaying,
-  v => {
-    clearTimeout(coverTimer)
-    coverTimer = setTimeout(() => (coverPlaying.value = v), v ? 0 : 350)
-  }
-)
 
 /* ==========================================================
    LIRIK (LRCLIB, gratis tanpa API key)
@@ -907,7 +897,6 @@ function teardownPwa() {
   window.removeEventListener('appinstalled', onInstalled)
   clearInterval(sleepTimerId)
   clearTimeout(toastTimer)
-  clearTimeout(coverTimer)
 }
 
 // Daftar yang bisa digeser ke samping: dukung drag mouse & roda mouse (layar sentuh sudah bawaan)
@@ -1920,10 +1909,7 @@ watch(
           <div class="flex-1 min-h-0 py-4 flex items-center justify-center overflow-hidden">
             <div
               :style="coverSize"
-              :class="[
-                'relative max-w-full aspect-square rounded-lg overflow-hidden bg-[#16251e] shadow-2xl shadow-black/60 transition-transform duration-500 ease-out',
-                coverPlaying ? 'scale-100' : 'scale-90'
-              ]"
+              class="relative max-w-full aspect-square rounded-lg overflow-hidden bg-[#16251e] shadow-2xl shadow-black/60"
             >
               <Transition :name="coverDir === 'prev' ? 'cover-prev' : 'cover-next'">
                 <img
