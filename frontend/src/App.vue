@@ -492,7 +492,6 @@ function onKey(e) {
 }
 
 onMounted(() => {
-  setupMediaSession()
   setupPwa()
   player.initYouTubePlayer('yt-hidden-player')
   player.searchMusic('Top Hits Indonesia')
@@ -884,57 +883,15 @@ function onTouchEnd(e) {
 }
 
 /* ==========================================================
-   MEDIA SESSION (kontrol di layar kunci / notifikasi) & JUDUL TAB
+   JUDUL TAB (Media Session diurus di stores/player)
    ========================================================== */
-function setupMediaSession() {
-  if (!('mediaSession' in navigator)) return
-  const ms = navigator.mediaSession
-  const safe = (action, fn) => {
-    try {
-      ms.setActionHandler(action, fn)
-    } catch {}
-  }
-  safe('play', () => !player.isPlaying && player.togglePlay())
-  safe('pause', () => player.isPlaying && player.togglePlay())
-  safe('previoustrack', () => player.playPrev())
-  safe('nexttrack', () => player.playNext())
-  safe('seekto', d => d.seekTime != null && player.seekTo(d.seekTime))
-  safe('seekbackward', () => player.seekTo(Math.max(0, player.currentTime - 10)))
-  safe('seekforward', () => player.seekTo(Math.min(player.duration || 0, player.currentTime + 10)))
-}
-
 watch(
   () => player.currentTrack?.video_id,
   () => {
     const t = player.currentTrack
     document.title = t ? `${t.title} • ${t.artist}` : 'TedzMusic'
-    if (!('mediaSession' in navigator)) return
-    navigator.mediaSession.metadata = t
-      ? new MediaMetadata({
-          title: t.title,
-          artist: t.artist,
-          artwork: t.thumbnail_url ? [{ src: t.thumbnail_url, sizes: '512x512' }] : []
-        })
-      : null
   },
   { immediate: true }
-)
-
-watch(
-  () => player.isPlaying,
-  playing => {
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
-  }
-)
-
-watch(
-  () => Math.floor(player.currentTime),
-  pos => {
-    if (!('mediaSession' in navigator) || !player.duration || pos > player.duration) return
-    try {
-      navigator.mediaSession.setPositionState({ duration: player.duration, position: pos, playbackRate: 1 })
-    } catch {}
-  }
 )
 </script>
 
