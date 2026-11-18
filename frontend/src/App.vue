@@ -492,10 +492,10 @@ const activeLyricIndex = computed(() => {
 
 function lineClass(i) {
   return [
-    'cursor-pointer font-extrabold leading-tight tracking-tight py-2 origin-left transition-all duration-300 text-3xl md:text-4xl',
+    'cursor-pointer font-extrabold leading-tight tracking-tight py-2 origin-left text-3xl md:text-4xl transition-[scale,opacity] duration-500 ease-out will-change-transform',
     i === activeLyricIndex.value
-      ? 'text-white scale-100'
-      : 'text-white/35 hover:text-white/70 scale-[0.92]'
+      ? 'opacity-100 scale-100'
+      : 'opacity-35 hover:opacity-70 scale-[0.92]'
   ]
 }
 
@@ -507,12 +507,30 @@ function scrollLyrics(i, smooth = true) {
     const el = box.querySelector(`[data-line="${i}"]`)
     if (!el) return
     const top = el.offsetTop - box.clientHeight / 2 + el.offsetHeight / 2
-    box.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' })
+    if (smooth) smoothScrollTo(box, top)
+    else box.scrollTop = top
   })
+}
+
+// Scroll halus dengan easing sendiri: tidak patah saat baris berganti cepat
+const lyricsAnim = new WeakMap()
+function smoothScrollTo(box, to, duration = 550) {
+  cancelAnimationFrame(lyricsAnim.get(box))
+  const from = box.scrollTop
+  const dist = to - from
+  if (Math.abs(dist) < 1) return
+  const t0 = performance.now()
+  const step = now => {
+    const p = Math.min(1, (now - t0) / duration)
+    box.scrollTop = from + dist * (1 - Math.pow(1 - p, 3))
+    if (p < 1) lyricsAnim.set(box, requestAnimationFrame(step))
+  }
+  lyricsAnim.set(box, requestAnimationFrame(step))
 }
 
 // Bila pengguna menggulir sendiri, auto-scroll berhenti sejenak
 function pauseLyricsScroll() {
+  document.querySelectorAll('[data-lyrics]').forEach(b => cancelAnimationFrame(lyricsAnim.get(b)))
   lyricsPausedUntil = Date.now() + 3500
 }
 
@@ -1719,7 +1737,7 @@ watch(
               <img
                 :src="player.currentTrack.thumbnail_url"
                 :alt="player.currentTrack.title"
-                :class="['cover-frame relative w-full aspect-square object-cover rounded-2xl ring-1 ring-white/10', player.isPlaying ? 'is-playing' : '']"
+                class="cover-frame relative w-full aspect-square object-cover rounded-2xl ring-1 ring-white/10"
               />
             </div>
 
@@ -2019,7 +2037,7 @@ watch(
           <div class="flex-1 min-h-0 py-4 flex items-center justify-center">
             <div :style="coverSize" class="relative max-w-full aspect-square">
               <img v-if="shownCover" :src="shownCover.url" aria-hidden="true" class="cover-glow" />
-              <div :class="['cover-frame relative w-full h-full rounded-2xl overflow-hidden bg-[#16251e] ring-1 ring-white/10', player.isPlaying ? 'is-playing' : '']">
+              <div class="cover-frame relative w-full h-full rounded-2xl overflow-hidden bg-[#16251e] ring-1 ring-white/10">
                 <Transition :name="coverDir === 'prev' ? 'cover-prev' : 'cover-next'">
                   <img v-if="shownCover" :key="shownCover.id" :src="shownCover.url" :alt="player.currentTrack.title" class="absolute inset-0 w-full h-full object-cover" />
                 </Transition>
@@ -2111,7 +2129,7 @@ watch(
       >
         <img
           :src="player.currentTrack.thumbnail_url"
-          class="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-70 saturate-200 pointer-events-none"
+          class="ambient-blur opacity-80 pointer-events-none"
         />
         <div class="absolute inset-0 bg-black/40 pointer-events-none"></div>
 
@@ -2224,9 +2242,9 @@ watch(
       </div>
     </Transition>
     <!-- ============ ANTREAN (bottom sheet di mobile, panel di desktop) ============ -->
-    <Transition name="sheet">
+    <Transition name="sheet" :duration="{ enter: 320, leave: 240 }">
       <div v-if="showQueue" class="fixed inset-0 z-70">
-        <div class="absolute inset-0 bg-black/60 md:bg-transparent" @click="showQueue = false"></div>
+        <div class="sheet-backdrop absolute inset-0 bg-black/60 md:bg-transparent" @click="showQueue = false"></div>
         <div
           class="sheet absolute bottom-0 inset-x-0 max-h-[78dvh] flex flex-col rounded-t-2xl bg-[#16251e] pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl shadow-black md:bottom-[5.25rem] md:top-2 md:right-2 md:left-auto md:inset-x-auto md:w-96 md:max-h-none md:rounded-lg md:border md:border-white/10"
         >
@@ -2276,9 +2294,9 @@ watch(
       </div>
     </Transition>
     <!-- ============ TAMBAHKAN KE ANTREAN / DAFTAR PUTAR ============ -->
-    <Transition name="sheet">
+    <Transition name="sheet" :duration="{ enter: 320, leave: 240 }">
       <div v-if="pickerTrack" class="fixed inset-0 z-80">
-        <div class="absolute inset-0 bg-black/60" @click="pickerTrack = null"></div>
+        <div class="sheet-backdrop absolute inset-0 bg-black/60" @click="pickerTrack = null"></div>
         <div
           class="sheet absolute bottom-0 inset-x-0 max-h-[75dvh] flex flex-col rounded-t-2xl bg-[#16251e] pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl shadow-black md:bottom-auto md:top-1/2 md:left-1/2 md:inset-x-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-96 md:rounded-lg md:border md:border-white/10"
         >
@@ -2317,9 +2335,9 @@ watch(
     </Transition>
 
     <!-- ============ TIMER TIDUR ============ -->
-    <Transition name="sheet">
+    <Transition name="sheet" :duration="{ enter: 320, leave: 240 }">
       <div v-if="showSleep" class="fixed inset-0 z-80">
-        <div class="absolute inset-0 bg-black/60" @click="showSleep = false"></div>
+        <div class="sheet-backdrop absolute inset-0 bg-black/60" @click="showSleep = false"></div>
         <div
           class="sheet absolute bottom-0 inset-x-0 flex flex-col rounded-t-2xl bg-[#16251e] pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl shadow-black md:bottom-auto md:top-1/2 md:left-1/2 md:inset-x-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-80 md:rounded-lg md:border md:border-white/10"
         >
@@ -2488,22 +2506,33 @@ watch(
   }
 }
 
-/* Antrean: bottom sheet naik dari bawah */
-.sheet-enter-active,
-.sheet-leave-active {
-  transition: opacity 0.2s ease;
+/* Bottom sheet: panel meluncur (transform saja, tetap solid), hanya latar gelap yang memudar */
+.sheet-backdrop {
+  transition: opacity 0.28s ease;
 }
-.sheet-enter-from,
-.sheet-leave-to {
+.sheet-enter-from .sheet-backdrop,
+.sheet-leave-to .sheet-backdrop {
   opacity: 0;
 }
-.sheet-enter-active .sheet,
+.sheet {
+  will-change: transform;
+}
+.sheet-enter-active .sheet {
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+}
 .sheet-leave-active .sheet {
-  transition: transform 0.25s ease;
+  transition: transform 0.24s cubic-bezier(0.4, 0, 1, 1), opacity 0.2s ease;
 }
 .sheet-enter-from .sheet,
 .sheet-leave-to .sheet {
-  transform: translateY(100%);
+  transform: translate3d(0, 100%, 0);
+}
+@media (min-width: 768px) {
+  .sheet-enter-from .sheet,
+  .sheet-leave-to .sheet {
+    transform: translate3d(0, 14px, 0);
+    opacity: 0;
+  }
 }
 
 /* Equalizer animasi untuk lagu yang sedang diputar */
@@ -2603,9 +2632,7 @@ watch(
 
 /* Kaca */
 .glass {
-  background: rgba(255, 255, 255, 0.08);
-  -webkit-backdrop-filter: blur(18px) saturate(1.4);
-  backdrop-filter: blur(18px) saturate(1.4);
+  background: rgba(255, 255, 255, 0.11);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -2614,16 +2641,16 @@ watch(
   position: absolute;
   inset: 0;
   overflow: hidden;
-  mix-blend-mode: screen;
-  opacity: 0.55;
+  opacity: 0.5;
+  contain: strict;
 }
 .aurora span {
   position: absolute;
-  width: 70vmax;
-  height: 70vmax;
+  width: 60vmax;
+  height: 60vmax;
   border-radius: 50%;
   will-change: transform;
-  animation: drift 18s ease-in-out infinite alternate;
+  animation: drift 28s ease-in-out infinite alternate;
 }
 .aurora span:nth-child(1) {
   background: radial-gradient(circle, rgba(245, 207, 91, 0.35), transparent 60%);
@@ -2634,7 +2661,7 @@ watch(
   background: radial-gradient(circle, rgba(45, 212, 191, 0.28), transparent 60%);
   bottom: -30%;
   right: -40%;
-  animation-duration: 24s;
+  animation-duration: 36s;
   animation-direction: alternate-reverse;
 }
 @keyframes drift {
@@ -2643,7 +2670,7 @@ watch(
   }
 }
 
-/* Cover: bercahaya, mengecil saat jeda, membesar saat diputar */
+/* Cover: bercahaya (statis, ukuran tidak berubah saat play / jeda) */
 .cover-glow {
   position: absolute;
   inset: 6% 4% -4%;
@@ -2657,11 +2684,6 @@ watch(
 }
 .cover-frame {
   box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.7);
-  transition: transform 0.5s cubic-bezier(0.3, 1.3, 0.5, 1);
-  transform: scale(0.88);
-}
-.cover-frame.is-playing {
-  transform: scale(1);
 }
 
 /* Tombol putar emas dengan cahaya */
