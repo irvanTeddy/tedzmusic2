@@ -92,6 +92,20 @@ const VolumeX = makeIcon(
   true
 )
 
+const More = makeIcon(
+  'MoreIcon',
+  () => [
+    h('circle', { cx: 12, cy: 5, r: 1.7 }),
+    h('circle', { cx: 12, cy: 12, r: 1.7 }),
+    h('circle', { cx: 12, cy: 19, r: 1.7 })
+  ],
+  true
+)
+const LinkIcon = makeIcon('LinkIcon', () => [
+  h('path', { d: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71' }),
+  h('path', { d: 'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' })
+])
+
 /* ==========================================================
    STATE UI
    ========================================================== */
@@ -107,6 +121,7 @@ const searchInputEl = ref(null)
 const scrolled = ref(false)
 const isOnline = ref(typeof navigator === 'undefined' ? true : navigator.onLine)
 const pickerTrack = ref(null) // lagu yang akan ditambahkan ke antrean / daftar putar
+const menuTrack = ref(null) // lagu yang menunya (titik tiga) sedang terbuka
 const dialog = ref(null) // { mode: 'create' | 'rename', id?, value, thenAdd? }
 const dialogInput = ref(null)
 const showSleep = ref(false)
@@ -190,6 +205,21 @@ const searchPlaceholder = computed(() => {
   return `Cari di ${activePlaylist.value?.name ?? 'daftar putar'}`
 })
 const hero = computed(() => player.tracks[0] ?? null)
+// "Mix untukmu": artis yang paling sering muncul di lagu disukai + terakhir diputar
+const artistMixes = computed(() => {
+  const map = new Map()
+  for (const t of [...player.likedTracks, ...player.recentTracks]) {
+    const a = cleanArtist(t.artist)
+    if (!a || /unknown artist/i.test(a)) continue
+    const e = map.get(a) || { artist: a, cover: t.thumbnail_url, ids: new Set() }
+    e.ids.add(t.video_id)
+    map.set(a, e)
+  }
+  return [...map.values()]
+    .map(e => ({ artist: e.artist, cover: e.cover, count: e.ids.size }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6)
+})
 // Tanpa pencarian: 6 pilihan cepat. Dengan pencarian: hasil teratas + 4 lagu.
 const quickPicks = computed(() => (hasQuery.value ? [] : player.tracks.slice(1, 7)))
 const topSongs = computed(() => (hasQuery.value ? player.tracks.slice(1, 5) : []))
@@ -298,6 +328,89 @@ watch(
     await Promise.race([preloadImage(t.thumbnail_url), new Promise(r => setTimeout(r, 700))])
     if (seq !== coverSeq) return
     shownCover.value = { id: t.video_id, url: t.thumbnail_url }
+  },
+  { immediate: true }
+)
+
+/* Warna aksen dari cover: sampel 12x12 piksel, sekali per lagu, di-cache.
+   Bila gambar tidak boleh dibaca (CORS) atau cover abu-abu, tetap emas. */
+const DEFAULT_ACCENT = '#f5cf5b'
+const accent = ref(DEFAULT_ACCENT)
+const accentCache = new Map()
+
+function rgbToHsl(r, g, b) {
+  r /= 255
+  g /= 255
+  b /= 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  const l = (max + min) / 2
+  if (d === 0) return [0, 0, l]
+  const s = d / (1 - Math.abs(2 * l - 1) || 1)
+  let hue = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+  hue *= 60
+  if (hue < 0) hue += 360
+  return [hue, s, l]
+}
+
+function extractAccent(url) {
+  if (accentCache.has(url)) return Promise.resolve(accentCache.get(url))
+  return new Promise(resolve => {
+    const done = v => {
+      accentCache.set(url, v)
+      if (accentCache.size > 60) accentCache.delete(accentCache.keys().next().value)
+      resolve(v)
+    }
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onerror = () => done(null)
+    img.onload = () => {
+      try {
+        const N = 12
+        const c = document.createElement('canvas')
+        c.width = c.height = N
+        const ctx = c.getContext('2d', { willReadFrequently: true })
+        ctx.drawImage(img, 0, 0, N, N)
+        const d = ctx.getImageData(0, 0, N, N).data
+        const buckets = Array.from({ length: 12 }, () => ({ w: 0, r: 0, g: 0, b: 0 }))
+        for (let i = 0; i < d.length; i += 4) {
+          const R = d[i], G = d[i + 1], B = d[i + 2]
+          const max = Math.max(R, G, B)
+          const min = Math.min(R, G, B)
+          if (max < 40 || (max - min) / max < 0.2) continue // terlalu gelap / abu-abu
+          const [hue] = rgbToHsl(R, G, B)
+          const wt = ((max - min) / max) * (max / 255)
+          const bk = buckets[Math.floor(hue / 30) % 12]
+          bk.w += wt
+          bk.r += R * wt
+          bk.g += G * wt
+          bk.b += B * wt
+        }
+        const top = buckets.reduce((a, b) => (b.w > a.w ? b : a))
+        if (top.w <= 0) return done(null)
+        const [hue, sat] = rgbToHsl(top.r / top.w, top.g / top.w, top.b / top.w)
+        const s = Math.round(Math.min(0.85, Math.max(0.6, sat)) * 100)
+        done(`hsl(${Math.round(hue)} ${s}% 66%)`) // terang tetap, supaya teks hitam di atasnya terbaca
+      } catch {
+        done(null)
+      }
+    }
+    img.src = url
+  })
+}
+
+let accentSeq = 0
+watch(
+  () => player.currentTrack?.thumbnail_url,
+  async url => {
+    const seq = ++accentSeq
+    if (!url) {
+      accent.value = DEFAULT_ACCENT
+      return
+    }
+    const c = await extractAccent(url)
+    if (seq === accentSeq) accent.value = c || DEFAULT_ACCENT
   },
   { immediate: true }
 )
@@ -559,6 +672,7 @@ function onKey(e) {
   if (e.key === 'Escape') {
     if (dialog.value) dialog.value = null
     else if (pickerTrack.value) pickerTrack.value = null
+    else if (menuTrack.value) menuTrack.value = null
     else if (showSleep.value) showSleep.value = false
     else if (showQueue.value) showQueue.value = false
     else if (showLyrics.value) showLyrics.value = false
@@ -655,6 +769,13 @@ function pickMood(m) {
   activeChip.value = m.label
   searchInput.value = ''
   player.searchMusic(m.query || forYouQuery())
+}
+
+function pickArtist(artist) {
+  activeTab.value = 'explore'
+  activeChip.value = `Mix ${artist}`
+  searchInput.value = ''
+  player.searchMusic(`${artist} lagu terbaik`)
 }
 
 function showAll() {
@@ -803,6 +924,49 @@ watch(dialog, d => {
 // Bila daftar putar yang sedang dibuka terhapus, kembali ke daftar semua daftar putar
 watch(activePlaylist, pl => {
   if (isPlaylistTab.value && !pl) activeTab.value = 'playlists'
+})
+
+// ----- Menu lagu (titik tiga) -----
+function openMenu(track) {
+  if (track) menuTrack.value = track
+}
+function queueNext(track) {
+  player.addToQueue(track)
+  const ids = player.queue.map(t => t.video_id)
+  const from = ids.lastIndexOf(track.video_id)
+  const to = player.currentIndex + 1
+  if (from > to) player.moveInQueue(from, to)
+  notify('Akan diputar berikutnya')
+}
+function searchSimilar(t) {
+  menuTrack.value = null
+  const title = cleanTitle(t.title, t.artist) || t.title
+  activeTab.value = 'explore'
+  activeChip.value = `Mirip ${title}`
+  searchInput.value = ''
+  player.searchMusic(`lagu seperti ${title} ${cleanArtist(t.artist)}`.trim())
+}
+async function copyLink(t) {
+  menuTrack.value = null
+  try {
+    await navigator.clipboard.writeText(`https://www.youtube.com/watch?v=${t.video_id}`)
+    notify('Tautan disalin')
+  } catch {
+    notify('Gagal menyalin tautan')
+  }
+}
+const menuActions = computed(() => {
+  const t = menuTrack.value
+  if (!t) return []
+  const liked = isTrackLiked(t.video_id)
+  return [
+    { label: 'Putar berikutnya', icon: Play, run: () => { queueNext(t); menuTrack.value = null } },
+    { label: 'Tambah ke antrean', icon: ListMusic, run: () => { player.addToQueue(t); notify('Ditambahkan ke antrean'); menuTrack.value = null } },
+    { label: 'Tambah ke daftar putar', icon: Plus, run: () => { menuTrack.value = null; openPicker(t) } },
+    { label: liked ? 'Hapus dari Lagu Disukai' : 'Sukai lagu', icon: Heart, run: () => { player.toggleLike(t); menuTrack.value = null } },
+    { label: 'Cari lagu serupa', icon: Search, run: () => searchSimilar(t) },
+    { label: 'Salin tautan', icon: LinkIcon, run: () => copyLink(t) }
+  ]
 })
 
 // ----- Timer tidur -----
@@ -1072,6 +1236,7 @@ function npTouchCancel() {
 const layers = [
   { open: () => !!dialog.value, close: () => (dialog.value = null) },
   { open: () => !!pickerTrack.value, close: () => (pickerTrack.value = null) },
+  { open: () => !!menuTrack.value, close: () => (menuTrack.value = null) },
   { open: () => showSleep.value, close: () => (showSleep.value = false) },
   { open: () => showQueue.value, close: () => (showQueue.value = false) },
   { open: () => showLyrics.value, close: () => (showLyrics.value = false) },
@@ -1156,7 +1321,7 @@ watch(
 </script>
 
 <template>
-  <div class="app relative h-dvh w-full overflow-hidden bg-[#060d0a] text-white">
+  <div :style="{ '--accent': accent }" class="app relative h-dvh w-full overflow-hidden bg-[#060d0a] text-white">
     <!-- Hidden headless YouTube audio engine -->
     <div class="fixed -top-96 -left-96 opacity-0 pointer-events-none">
       <div id="yt-hidden-player"></div>
@@ -1210,7 +1375,7 @@ watch(
                   <component :is="item.icon" :class="['w-5 h-5 text-white', item.id === 'liked' ? 'fill-white' : '']" />
                 </div>
                 <div class="hidden lg:block min-w-0">
-                  <p :class="['font-semibold truncate', activeTab === item.id ? 'text-[#f5cf5b]' : '']">{{ item.label }}</p>
+                  <p :class="['font-semibold truncate', activeTab === item.id ? 'text-(--accent)' : '']">{{ item.label }}</p>
                   <p class="text-sm text-[#a3b3aa] truncate">{{ item.sub }}</p>
                 </div>
               </button>
@@ -1229,13 +1394,13 @@ watch(
                   <ListMusic v-else class="w-5 h-5 text-white" />
                 </div>
                 <div class="hidden lg:block min-w-0">
-                  <p :class="['font-semibold truncate', activeTab === 'pl:' + pl.id ? 'text-[#f5cf5b]' : '']">{{ pl.name }}</p>
+                  <p :class="['font-semibold truncate', activeTab === 'pl:' + pl.id ? 'text-(--accent)' : '']">{{ pl.name }}</p>
                   <p class="text-sm text-[#a3b3aa] truncate">Daftar putar • {{ pl.tracks.length }} lagu</p>
                 </div>
               </button>
             </div>
             <div class="hidden lg:flex items-start gap-3 m-3 rounded-lg bg-white/5 p-3">
-              <Keyboard class="w-4 h-4 text-[#f5cf5b] mt-0.5 shrink-0" />
+              <Keyboard class="w-4 h-4 text-(--accent) mt-0.5 shrink-0" />
               <p class="text-xs text-[#a3b3aa] leading-relaxed">
                 Tekan <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-white text-[10px]">Spasi</kbd> untuk putar / jeda lagu.
               </p>
@@ -1324,7 +1489,7 @@ watch(
                       <template v-if="installEvent">Pasang TedzMusic di layar utama untuk akses cepat dan tampilan layar penuh.</template>
                       <template v-else>Di iPhone: ketuk tombol Bagikan, lalu pilih <b>Tambahkan ke Layar Utama</b>.</template>
                     </p>
-                    <button v-if="installEvent" @click="installApp" class="shrink-0 flex items-center gap-1.5 rounded-full bg-[#f5cf5b] text-black text-sm font-bold px-4 h-9 hover:bg-[#ffe27a] active:scale-95 transition">
+                    <button v-if="installEvent" @click="installApp" class="shrink-0 flex items-center gap-1.5 rounded-full bg-(--accent) text-black text-sm font-bold px-4 h-9 hover:brightness-110 active:scale-95 transition">
                       <Download class="w-4 h-4" /> Pasang
                     </button>
                     <button @click="dismissInstall" aria-label="Tutup" class="shrink-0 p-1.5 text-[#a3b3aa] hover:text-white"><X class="w-4 h-4" /></button>
@@ -1336,7 +1501,7 @@ watch(
                       @click="showAll"
                       :class="[
                         'shrink-0 rounded-full px-4 h-9 whitespace-nowrap text-sm font-medium transition',
-                        !hasQuery ? 'bg-[#f5cf5b] text-black' : 'bg-white/10 hover:bg-white/15'
+                        !hasQuery ? 'bg-(--accent) text-black' : 'bg-white/10 hover:bg-white/15'
                       ]"
                     >
                       Semua
@@ -1347,7 +1512,7 @@ watch(
                       @click="pickMood(m)"
                       :class="[
                         'shrink-0 rounded-full px-4 h-9 whitespace-nowrap text-sm font-medium transition',
-                        activeChip === m.label ? 'bg-[#f5cf5b] text-black' : 'bg-white/10 hover:bg-white/15'
+                        activeChip === m.label ? 'bg-(--accent) text-black' : 'bg-white/10 hover:bg-white/15'
                       ]"
                     >
                       {{ m.label }}
@@ -1375,13 +1540,13 @@ watch(
 
                   <div v-else-if="player.searchError" class="flex flex-col items-center text-center gap-4 rounded-lg bg-white/[0.04] border border-white/10 px-6 py-12">
                     <div class="w-14 h-14 rounded-full bg-white/5 flex items-center justify-center">
-                      <WifiOff class="w-7 h-7 text-[#f5cf5b]" />
+                      <WifiOff class="w-7 h-7 text-(--accent)" />
                     </div>
                     <div>
                       <p class="font-bold">Gagal memuat musik</p>
                       <p class="text-sm text-[#a3b3aa] mt-1 max-w-sm">{{ player.searchError }}</p>
                     </div>
-                    <button @click="player.retrySearch()" class="flex items-center gap-2 rounded-full bg-[#f5cf5b] text-black font-bold text-sm px-5 h-10 hover:bg-[#ffe27a] active:scale-95 transition">
+                    <button @click="player.retrySearch()" class="flex items-center gap-2 rounded-full bg-(--accent) text-black font-bold text-sm px-5 h-10 hover:brightness-110 active:scale-95 transition">
                       <RotateCw class="w-4 h-4" /> Coba lagi
                     </button>
                   </div>
@@ -1418,7 +1583,7 @@ watch(
                               <Shuffle class="w-4 h-4" /> <span class="hidden sm:inline">Acak</span>
                             </button>
                             <button @click.stop="player.toggleLike(hero)" aria-label="Sukai lagu" class="glass hidden sm:flex h-11 w-11 rounded-full items-center justify-center hover:bg-white/20 active:scale-90 transition">
-                              <Heart :class="['w-5 h-5 transition', isTrackLiked(hero.video_id) ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-white']" />
+                              <Heart :class="['w-5 h-5 transition', isTrackLiked(hero.video_id) ? 'text-(--accent) fill-(--accent)' : 'text-white']" />
                             </button>
                           </div>
                         </div>
@@ -1434,18 +1599,18 @@ watch(
                         :style="{ '--d': 60 + i * 45 + 'ms' }"
                         :class="[
                           'rise group relative flex items-center h-14 md:h-16 rounded-md overflow-hidden hover:bg-white/15 cursor-pointer transition',
-                          isCurrent(track) ? 'bg-white/15 ring-1 ring-[#f5cf5b]/40' : 'bg-white/[0.07]'
+                          isCurrent(track) ? 'bg-white/15 ring-1 ring-white/30' : 'bg-white/[0.07]'
                         ]"
                       >
                         <img :src="track.thumbnail_url" :alt="track.title" class="h-full aspect-square object-cover shrink-0" />
-                        <p :class="['flex-1 min-w-0 px-3 text-sm font-bold line-clamp-2 leading-tight', isCurrent(track) ? 'text-[#f5cf5b]' : '']">
+                        <p :class="['flex-1 min-w-0 px-3 text-sm font-bold line-clamp-2 leading-tight', isCurrent(track) ? 'text-(--accent)' : '']">
                           {{ track.title }}
                         </p>
                         <span v-if="isActivePlaying(track)" class="eq mr-4 group-hover:hidden"><i></i><i></i><i></i></span>
                         <button
                           @click.stop="playOrToggle(track, player.tracks)"
                           :aria-label="isActivePlaying(track) ? 'Jeda' : 'Putar'"
-                          class="hidden md:flex absolute right-3 w-10 h-10 rounded-full bg-[#f5cf5b] text-black items-center justify-center shadow-xl shadow-black/50 opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 hover:scale-105 transition"
+                          class="hidden md:flex absolute right-3 w-10 h-10 rounded-full bg-(--accent) text-black items-center justify-center shadow-xl shadow-black/50 opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 hover:scale-105 transition"
                         >
                           <Pause v-if="isActivePlaying(track)" class="w-5 h-5" />
                           <Play v-else class="w-5 h-5" />
@@ -1471,7 +1636,7 @@ watch(
                             @click.stop="playOrToggle(hero, player.tracks)"
                             :aria-label="isActivePlaying(hero) ? 'Jeda' : 'Putar'"
                             :class="[
-                              'absolute right-5 bottom-5 w-12 h-12 rounded-full bg-[#f5cf5b] text-black flex items-center justify-center shadow-xl shadow-black/50 hover:scale-105 transition duration-200',
+                              'absolute right-5 bottom-5 w-12 h-12 rounded-full bg-(--accent) text-black flex items-center justify-center shadow-xl shadow-black/50 hover:scale-105 transition duration-200',
                               isActivePlaying(hero) ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
                             ]"
                           >
@@ -1502,19 +1667,40 @@ watch(
                             </div>
                           </div>
                           <div class="flex-1 min-w-0">
-                            <h4 :class="['text-sm font-medium truncate', isCurrent(track) ? 'text-[#f5cf5b]' : '']">{{ track.title }}</h4>
+                            <h4 :class="['text-sm font-medium truncate', isCurrent(track) ? 'text-(--accent)' : '']">{{ track.title }}</h4>
                             <p class="text-sm text-[#a3b3aa] truncate">{{ track.artist }}</p>
                           </div>
                           <button @click.stop="player.toggleLike(track)" aria-label="Sukai lagu" class="p-2">
-                            <Heart :class="['w-4 h-4 transition', isTrackLiked(track.video_id) ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-[#a3b3aa] reveal hover:text-white']" />
+                            <Heart :class="['w-4 h-4 transition', isTrackLiked(track.video_id) ? 'text-(--accent) fill-(--accent)' : 'text-[#a3b3aa] reveal hover:text-white']" />
                           </button>
-                          <button @click.stop="openPicker(track)" aria-label="Tambahkan ke daftar putar" class="p-2">
-                            <ListPlus class="w-5 h-5 text-[#a3b3aa] reveal hover:text-white" />
+                          <button @click.stop="openMenu(track)" aria-label="Menu lagu" class="p-2">
+                            <More class="w-5 h-5 text-[#a3b3aa] reveal hover:text-white" />
                           </button>
                           <span class="hidden sm:block w-10 text-right text-sm text-[#a3b3aa] tabular-nums">{{ formatTime(track.duration) }}</span>
                         </div>
                       </div>
                     </div>
+
+                    <!-- Mix untukmu -->
+                    <section v-if="!hasQuery && artistMixes.length" class="mb-10">
+                      <h3 class="text-xl md:text-2xl font-bold mb-3">Mix untukmu</h3>
+                      <div v-drag-scroll class="flex gap-3 overflow-x-auto snap-x no-scrollbar -mx-4 px-4 md:-mx-6 md:px-6 pb-2">
+                        <button
+                          v-for="(m, i) in artistMixes"
+                          :key="m.artist"
+                          @click="pickArtist(m.artist)"
+                          :style="{ '--d': i * 40 + 'ms' }"
+                          class="rise group snap-start shrink-0 w-36 md:w-44 text-left"
+                        >
+                          <div class="relative aspect-square rounded-xl overflow-hidden bg-white/5 shadow-lg shadow-black/40">
+                            <img :src="m.cover" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                            <div class="absolute inset-0 bg-linear-to-t from-black/80 via-black/10 to-transparent"></div>
+                            <span class="absolute left-3 right-3 bottom-3 text-lg font-extrabold leading-tight line-clamp-2">{{ m.artist }}</span>
+                          </div>
+                          <p class="text-xs text-[#a3b3aa] mt-2 truncate">Dari {{ m.count }} lagumu</p>
+                        </button>
+                      </div>
+                    </section>
 
                     <!-- Terakhir diputar -->
                     <section v-if="!hasQuery && player.recentTracks.length" class="mb-10">
@@ -1530,7 +1716,7 @@ watch(
                             <img :src="track.thumbnail_url" :alt="track.title" loading="lazy" class="w-full h-full object-cover" />
                             <span v-if="isActivePlaying(track)" class="eq absolute top-2 left-2"><i></i><i></i><i></i></span>
                           </div>
-                          <h4 :class="['text-xs font-bold truncate mt-2', isCurrent(track) ? 'text-[#f5cf5b]' : '']">{{ track.title }}</h4>
+                          <h4 :class="['text-xs font-bold truncate mt-2', isCurrent(track) ? 'text-(--accent)' : '']">{{ track.title }}</h4>
                           <p class="text-xs text-[#a3b3aa] truncate">{{ track.artist }}</p>
                         </div>
                       </div>
@@ -1556,7 +1742,7 @@ watch(
                               @click.stop="playOrToggle(track, player.tracks)"
                               :aria-label="isActivePlaying(track) ? 'Jeda' : 'Putar'"
                               :class="[
-                                'absolute right-2 bottom-2 w-11 h-11 rounded-full bg-[#f5cf5b] text-black flex items-center justify-center shadow-xl shadow-black/50 hover:scale-105 transition duration-200',
+                                'absolute right-2 bottom-2 w-11 h-11 rounded-full bg-(--accent) text-black flex items-center justify-center shadow-xl shadow-black/50 hover:scale-105 transition duration-200',
                                 isActivePlaying(track) ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
                               ]"
                             >
@@ -1564,7 +1750,7 @@ watch(
                               <Play v-else class="w-5 h-5" />
                             </button>
                           </div>
-                          <h4 :class="['text-sm font-bold truncate mt-3', isCurrent(track) ? 'text-[#f5cf5b]' : '']">{{ track.title }}</h4>
+                          <h4 :class="['text-sm font-bold truncate mt-3', isCurrent(track) ? 'text-(--accent)' : '']">{{ track.title }}</h4>
                           <p class="text-sm text-[#a3b3aa] truncate mt-0.5">{{ track.artist }}</p>
                         </div>
                       </div>
@@ -1593,14 +1779,14 @@ watch(
                             </div>
                           </div>
                           <div class="flex-1 min-w-0">
-                            <h4 :class="['text-sm font-medium truncate', isCurrent(track) ? 'text-[#f5cf5b]' : '']">{{ track.title }}</h4>
+                            <h4 :class="['text-sm font-medium truncate', isCurrent(track) ? 'text-(--accent)' : '']">{{ track.title }}</h4>
                             <p class="text-sm text-[#a3b3aa] truncate">{{ track.artist }}</p>
                           </div>
                           <button @click.stop="player.toggleLike(track)" aria-label="Sukai lagu" class="p-2">
-                            <Heart :class="['w-4 h-4 transition', isTrackLiked(track.video_id) ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-[#a3b3aa] reveal hover:text-white']" />
+                            <Heart :class="['w-4 h-4 transition', isTrackLiked(track.video_id) ? 'text-(--accent) fill-(--accent)' : 'text-[#a3b3aa] reveal hover:text-white']" />
                           </button>
-                          <button @click.stop="openPicker(track)" aria-label="Tambahkan ke daftar putar" class="p-2">
-                            <ListPlus class="w-5 h-5 text-[#a3b3aa] reveal hover:text-white" />
+                          <button @click.stop="openMenu(track)" aria-label="Menu lagu" class="p-2">
+                            <More class="w-5 h-5 text-[#a3b3aa] reveal hover:text-white" />
                           </button>
                           <span class="hidden sm:block w-10 text-right text-sm text-[#a3b3aa] tabular-nums">{{ formatTime(track.duration) }}</span>
                         </div>
@@ -1618,7 +1804,7 @@ watch(
                     </div>
                     <button
                       @click="openCreate()"
-                      class="shrink-0 flex items-center gap-2 rounded-full bg-[#f5cf5b] text-black font-bold text-sm pl-3 pr-5 h-11 shadow-lg shadow-black/30 hover:bg-[#ffe27a] hover:scale-[1.03] active:scale-95 transition"
+                      class="shrink-0 flex items-center gap-2 rounded-full bg-(--accent) text-black font-bold text-sm pl-3 pr-5 h-11 shadow-lg shadow-black/30 hover:brightness-110 hover:scale-[1.03] active:scale-95 transition"
                     >
                       <span class="w-6 h-6 rounded-full bg-black/10 flex items-center justify-center"><Plus class="w-4 h-4" /></span>
                       Buat baru
@@ -1682,7 +1868,7 @@ watch(
                     <div class="flex items-center gap-5 mb-6">
                       <button
                         @click="playLibrary"
-                        class="w-14 h-14 rounded-full bg-[#f5cf5b] text-black flex items-center justify-center hover:scale-105 hover:bg-[#ffe27a] active:scale-95 transition"
+                        class="w-14 h-14 rounded-full bg-(--accent) text-black flex items-center justify-center hover:scale-105 hover:brightness-110 active:scale-95 transition"
                         :aria-label="libraryIsPlaying ? 'Jeda' : 'Putar'"
                       >
                         <Pause v-if="libraryIsPlaying" class="w-7 h-7" />
@@ -1692,10 +1878,10 @@ watch(
                         @click="toggleShuffle"
                         aria-label="Acak"
                         title="Acak"
-                        :class="['relative w-10 h-10 flex items-center justify-center transition', shuffle ? 'text-[#f5cf5b]' : 'text-[#a3b3aa] hover:text-white']"
+                        :class="['relative w-10 h-10 flex items-center justify-center transition', shuffle ? 'text-(--accent)' : 'text-[#a3b3aa] hover:text-white']"
                       >
                         <Shuffle class="w-6 h-6" />
-                        <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+                        <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-(--accent)"></span>
                       </button>
                       <button
                         v-if="activeTab === 'queue'"
@@ -1723,7 +1909,7 @@ watch(
                         ]"
                       >
                         <span class="hidden sm:flex w-8 justify-center text-sm text-[#a3b3aa] tabular-nums">
-                          <span :class="['group-hover:hidden', isCurrent(track) ? 'text-[#f5cf5b]' : '']">{{ idx + 1 }}</span>
+                          <span :class="['group-hover:hidden', isCurrent(track) ? 'text-(--accent)' : '']">{{ idx + 1 }}</span>
                           <Play class="hidden group-hover:block w-4 h-4 text-white" />
                         </span>
                         <div class="flex flex-1 min-w-0 items-center gap-3">
@@ -1734,7 +1920,7 @@ watch(
                             </div>
                           </div>
                           <div class="min-w-0">
-                            <h4 :class="['text-sm font-medium truncate', isCurrent(track) ? 'text-[#f5cf5b]' : '']">{{ track.title }}</h4>
+                            <h4 :class="['text-sm font-medium truncate', isCurrent(track) ? 'text-(--accent)' : '']">{{ track.title }}</h4>
                             <p class="text-sm text-[#a3b3aa] truncate group-hover:text-white">{{ track.artist }}</p>
                           </div>
                         </div>
@@ -1747,10 +1933,10 @@ watch(
                           <template v-else>
                             <button v-if="isPlaylistTab" @click.stop="removeFromActivePlaylist(track)" aria-label="Hapus dari daftar putar" class="p-1.5 text-[#a3b3aa] hover:text-white"><Trash2 class="w-4 h-4" /></button>
                             <button @click.stop="player.toggleLike(track)" aria-label="Sukai lagu" class="p-1.5">
-                              <Heart :class="['w-4 h-4 transition', isTrackLiked(track.video_id) ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-[#a3b3aa] reveal hover:text-white']" />
+                              <Heart :class="['w-4 h-4 transition', isTrackLiked(track.video_id) ? 'text-(--accent) fill-(--accent)' : 'text-[#a3b3aa] reveal hover:text-white']" />
                             </button>
-                            <button v-if="!isPlaylistTab" @click.stop="openPicker(track)" aria-label="Tambahkan ke daftar putar" class="p-1.5">
-                              <ListPlus class="w-5 h-5 text-[#a3b3aa] reveal hover:text-white" />
+                            <button @click.stop="openMenu(track)" aria-label="Menu lagu" class="p-1.5">
+                              <More class="w-5 h-5 text-[#a3b3aa] reveal hover:text-white" />
                             </button>
                           </template>
                           <span :class="['w-10 text-right text-sm text-[#a3b3aa] tabular-nums', activeTab === 'queue' ? 'hidden sm:block' : '']">{{ formatTime(track.duration) }}</span>
@@ -1804,7 +1990,7 @@ watch(
                 </div>
               </div>
               <button @click="player.toggleLike(player.currentTrack)" aria-label="Sukai lagu" class="glass w-10 h-10 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition">
-                <Heart :class="['w-5 h-5 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-white']" />
+                <Heart :class="['w-5 h-5 transition', player.isCurrentLiked ? 'text-(--accent) fill-(--accent)' : 'text-white']" />
               </button>
               <button @click="openPicker(player.currentTrack)" aria-label="Tambahkan ke daftar putar" class="glass w-10 h-10 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition">
                 <ListPlus class="w-5 h-5" />
@@ -1817,7 +2003,7 @@ watch(
               @click="showLyrics = true"
               class="relative glass rounded-xl px-4 py-3 text-left hover:bg-white/15 transition"
             >
-              <p class="text-[10px] uppercase tracking-widest text-[#f5cf5b] font-bold mb-1">Lirik</p>
+              <p class="text-[10px] uppercase tracking-widest text-(--accent) font-bold mb-1">Lirik</p>
               <Transition name="fade" mode="out-in">
                 <p :key="activeLyricIndex" class="text-sm font-semibold line-clamp-2">{{ lyricLines[activeLyricIndex].text || '♪' }}</p>
               </Transition>
@@ -1871,7 +2057,7 @@ watch(
               <p class="text-xs text-[#a3b3aa] truncate">{{ player.currentTrack.artist }}</p>
             </div>
             <button @click="player.toggleLike(player.currentTrack)" aria-label="Sukai lagu" class="p-1.5 shrink-0">
-              <Heart :class="['w-4 h-4 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-[#a3b3aa] hover:text-white']" />
+              <Heart :class="['w-4 h-4 transition', player.isCurrentLiked ? 'text-(--accent) fill-(--accent)' : 'text-[#a3b3aa] hover:text-white']" />
             </button>
             <button @click="openPicker(player.currentTrack)" aria-label="Tambahkan ke daftar putar" class="p-1.5 shrink-0 text-[#a3b3aa] hover:text-white">
               <ListPlus class="w-4 h-4" />
@@ -1887,10 +2073,10 @@ watch(
               @click="toggleShuffle"
               aria-label="Acak"
               title="Acak"
-              :class="['relative w-8 h-8 flex items-center justify-center transition active:scale-90', shuffle ? 'text-[#f5cf5b]' : 'text-[#a3b3aa] hover:text-white']"
+              :class="['relative w-8 h-8 flex items-center justify-center transition active:scale-90', shuffle ? 'text-(--accent)' : 'text-[#a3b3aa] hover:text-white']"
             >
               <Shuffle class="w-[18px] h-[18px]" />
-              <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+              <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-(--accent)"></span>
             </button>
             <button @click="player.playPrev" class="w-8 h-8 flex items-center justify-center text-[#a3b3aa] hover:text-white transition active:scale-90" aria-label="Sebelumnya">
               <SkipBack class="w-5 h-5" />
@@ -1910,11 +2096,11 @@ watch(
               @click="cycleRepeat"
               :aria-label="repeatLabel"
               :title="repeatLabel"
-              :class="['relative w-8 h-8 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-[#f5cf5b]' : 'text-[#a3b3aa] hover:text-white']"
+              :class="['relative w-8 h-8 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-(--accent)' : 'text-[#a3b3aa] hover:text-white']"
             >
               <Repeat1 v-if="repeat === 'one'" class="w-[18px] h-[18px]" />
               <Repeat v-else class="w-[18px] h-[18px]" />
-              <span v-if="repeat !== 'off'" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+              <span v-if="repeat !== 'off'" class="absolute bottom-0 w-1 h-1 rounded-full bg-(--accent)"></span>
             </button>
           </div>
           <div class="w-full max-w-xl flex items-center gap-2">
@@ -1936,7 +2122,7 @@ watch(
         <div class="flex items-center justify-end gap-1.5">
           <button
             @click="showSleep = true"
-            :class="['h-9 px-1.5 flex items-center gap-1 transition', sleepActive ? 'text-[#f5cf5b]' : 'text-[#a3b3aa] hover:text-white']"
+            :class="['h-9 px-1.5 flex items-center gap-1 transition', sleepActive ? 'text-(--accent)' : 'text-[#a3b3aa] hover:text-white']"
             aria-label="Timer tidur"
             title="Timer tidur"
           >
@@ -1945,7 +2131,7 @@ watch(
           </button>
           <button
             @click="showQueue = !showQueue"
-            :class="['w-9 h-9 flex items-center justify-center transition', showQueue ? 'text-[#f5cf5b]' : 'text-[#a3b3aa] hover:text-white']"
+            :class="['w-9 h-9 flex items-center justify-center transition', showQueue ? 'text-(--accent)' : 'text-[#a3b3aa] hover:text-white']"
             aria-label="Antrean"
             title="Antrean"
           >
@@ -1958,7 +2144,7 @@ watch(
             title="Lirik"
             :class="[
               'w-9 h-9 flex items-center justify-center transition disabled:opacity-30 disabled:pointer-events-none',
-              showLyrics ? 'text-[#f5cf5b]' : 'text-[#a3b3aa] hover:text-white'
+              showLyrics ? 'text-(--accent)' : 'text-[#a3b3aa] hover:text-white'
             ]"
           >
             <Mic class="w-5 h-5" />
@@ -1999,7 +2185,7 @@ watch(
             <p class="text-xs text-[#a3b3aa] truncate">{{ player.currentTrack.artist }}</p>
           </div>
           <button @click.stop="player.toggleLike(player.currentTrack)" class="p-2" aria-label="Sukai lagu">
-            <Heart :class="['w-6 h-6', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-white/80']" />
+            <Heart :class="['w-6 h-6', player.isCurrentLiked ? 'text-(--accent) fill-(--accent)' : 'text-white/80']" />
           </button>
           <button
             @click.stop="player.togglePlay"
@@ -2030,12 +2216,12 @@ watch(
           <span
             :class="[
               'flex items-center justify-center h-8 w-16 rounded-full transition-all duration-300',
-              isTabActive(item.id) ? 'bg-[#f5cf5b]/15 text-[#f5cf5b]' : 'text-[#a3b3aa] group-active:bg-white/10'
+              isTabActive(item.id) ? 'bg-(--accent)/15 text-(--accent)' : 'text-[#a3b3aa] group-active:bg-white/10'
             ]"
           >
             <component
               :is="item.icon"
-              :class="['w-[22px] h-[22px] transition', isTabActive(item.id) && item.id === 'liked' ? 'fill-[#f5cf5b]' : '']"
+              :class="['w-[22px] h-[22px] transition', isTabActive(item.id) && item.id === 'liked' ? 'fill-(--accent)' : '']"
             />
           </span>
           <span :class="['text-[11px] leading-none transition', isTabActive(item.id) ? 'font-bold text-white' : 'font-medium text-[#a3b3aa]']">
@@ -2115,7 +2301,7 @@ watch(
               </div>
             </div>
             <button @click="player.toggleLike(player.currentTrack)" class="glass w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition shrink-0" aria-label="Sukai lagu">
-              <Heart :class="['w-6 h-6 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b] scale-110' : 'text-white']" />
+              <Heart :class="['w-6 h-6 transition', player.isCurrentLiked ? 'text-(--accent) fill-(--accent) scale-110' : 'text-white']" />
             </button>
           </div>
 
@@ -2147,9 +2333,9 @@ watch(
 
           <!-- Kontrol -->
           <div class="shrink-0 flex items-center justify-between mt-2">
-            <button @click="toggleShuffle" aria-label="Acak" :class="['relative w-11 h-11 flex items-center justify-center transition active:scale-90', shuffle ? 'text-[#f5cf5b]' : 'text-white/70']">
+            <button @click="toggleShuffle" aria-label="Acak" :class="['relative w-11 h-11 flex items-center justify-center transition active:scale-90', shuffle ? 'text-(--accent)' : 'text-white/70']">
               <Shuffle class="w-5 h-5" />
-              <span v-if="shuffle" class="absolute bottom-1 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+              <span v-if="shuffle" class="absolute bottom-1 w-1 h-1 rounded-full bg-(--accent)"></span>
             </button>
             <button @click="player.playPrev" class="w-14 h-14 flex items-center justify-center active:scale-90 transition" aria-label="Sebelumnya">
               <SkipBack class="w-9 h-9" />
@@ -2161,10 +2347,10 @@ watch(
             <button @click="nextTrack" class="w-14 h-14 flex items-center justify-center active:scale-90 transition" aria-label="Berikutnya">
               <SkipForward class="w-9 h-9" />
             </button>
-            <button @click="cycleRepeat" :aria-label="repeatLabel" :class="['relative w-11 h-11 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-[#f5cf5b]' : 'text-white/70']">
+            <button @click="cycleRepeat" :aria-label="repeatLabel" :class="['relative w-11 h-11 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-(--accent)' : 'text-white/70']">
               <Repeat1 v-if="repeat === 'one'" class="w-5 h-5" />
               <Repeat v-else class="w-5 h-5" />
-              <span v-if="repeat !== 'off'" class="absolute bottom-1 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+              <span v-if="repeat !== 'off'" class="absolute bottom-1 w-1 h-1 rounded-full bg-(--accent)"></span>
             </button>
           </div>
 
@@ -2176,7 +2362,7 @@ watch(
             <button @click="showQueue = true" class="glass h-11 rounded-full flex items-center justify-center gap-2 text-xs font-bold active:scale-95 transition">
               <ListMusic class="w-4 h-4" /> Antrean
             </button>
-            <button @click="showSleep = true" :class="['glass h-11 rounded-full flex items-center justify-center gap-2 text-xs font-bold active:scale-95 transition', sleepActive ? 'text-[#f5cf5b]' : '']">
+            <button @click="showSleep = true" :class="['glass h-11 rounded-full flex items-center justify-center gap-2 text-xs font-bold active:scale-95 transition', sleepActive ? 'text-(--accent)' : '']">
               <Moon class="w-4 h-4" /> {{ sleepActive ? sleepLabel : 'Timer' }}
             </button>
           </div>
@@ -2276,9 +2462,9 @@ watch(
               <span>{{ formatTime(player.duration) }}</span>
             </div>
             <div class="flex items-center justify-center gap-4 mt-2">
-              <button @click="toggleShuffle" aria-label="Acak" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', shuffle ? 'text-[#f5cf5b]' : 'text-white/70']">
+              <button @click="toggleShuffle" aria-label="Acak" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', shuffle ? 'text-(--accent)' : 'text-white/70']">
                 <Shuffle class="w-5 h-5" />
-                <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+                <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-(--accent)"></span>
               </button>
               <button @click="player.playPrev" class="w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Sebelumnya">
                 <SkipBack class="w-7 h-7" />
@@ -2294,10 +2480,10 @@ watch(
               <button @click="nextTrack" class="w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Berikutnya">
                 <SkipForward class="w-7 h-7" />
               </button>
-              <button @click="cycleRepeat" :aria-label="repeatLabel" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-[#f5cf5b]' : 'text-white/70']">
+              <button @click="cycleRepeat" :aria-label="repeatLabel" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-(--accent)' : 'text-white/70']">
                 <Repeat1 v-if="repeat === 'one'" class="w-5 h-5" />
                 <Repeat v-else class="w-5 h-5" />
-                <span v-if="repeat !== 'off'" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+                <span v-if="repeat !== 'off'" class="absolute bottom-0 w-1 h-1 rounded-full bg-(--accent)"></span>
               </button>
             </div>
           </div>
@@ -2324,7 +2510,7 @@ watch(
               <div class="flex items-center gap-3 p-2 rounded-md bg-white/10">
                 <img :src="player.currentTrack.thumbnail_url" class="w-11 h-11 rounded object-cover shrink-0" />
                 <div class="min-w-0 flex-1">
-                  <p class="text-sm font-medium truncate text-[#f5cf5b]">{{ player.currentTrack.title }}</p>
+                  <p class="text-sm font-medium truncate text-(--accent)">{{ player.currentTrack.title }}</p>
                   <p class="text-xs text-[#a3b3aa] truncate">{{ player.currentTrack.artist }}</p>
                 </div>
                 <span v-if="player.isPlaying" class="eq mr-2"><i></i><i></i><i></i></span>
@@ -2386,11 +2572,42 @@ watch(
                 <p class="text-sm font-medium truncate">{{ pl.name }}</p>
                 <p class="text-xs text-[#a3b3aa]">{{ pl.tracks.length }} lagu</p>
               </div>
-              <Check v-if="player.isInPlaylist(pl.id, pickerTrack.video_id)" class="w-5 h-5 text-[#f5cf5b] shrink-0" />
+              <Check v-if="player.isInPlaylist(pl.id, pickerTrack.video_id)" class="w-5 h-5 text-(--accent) shrink-0" />
             </button>
             <button @click="openCreate(pickerTrack)" class="w-full flex items-center gap-3 p-2 rounded-md hover:bg-white/10 transition text-left">
               <div class="w-11 h-11 rounded bg-white/10 flex items-center justify-center shrink-0"><Plus class="w-5 h-5" /></div>
               <span class="text-sm font-medium">Daftar putar baru</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ============ MENU LAGU (titik tiga) ============ -->
+    <Transition name="sheet" :duration="{ enter: 320, leave: 240 }">
+      <div v-if="menuTrack" class="fixed inset-0 z-80">
+        <div class="sheet-backdrop absolute inset-0 bg-black/60" @click="menuTrack = null"></div>
+        <div
+          class="sheet absolute bottom-0 inset-x-0 flex flex-col rounded-t-2xl bg-[#16251e] pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl shadow-black md:bottom-auto md:top-1/2 md:left-1/2 md:inset-x-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-80 md:rounded-lg md:border md:border-white/10"
+        >
+          <div class="md:hidden mx-auto mt-2 h-1 w-10 rounded-full bg-white/25"></div>
+          <div class="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-white/10">
+            <img :src="menuTrack.thumbnail_url" class="w-11 h-11 rounded object-cover shrink-0" />
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-bold truncate">{{ menuTrack.title }}</p>
+              <p class="text-xs text-[#a3b3aa] truncate">{{ menuTrack.artist }}</p>
+            </div>
+            <button @click="menuTrack = null" aria-label="Tutup" class="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center"><X class="w-5 h-5" /></button>
+          </div>
+          <div class="p-2">
+            <button
+              v-for="a in menuActions"
+              :key="a.label"
+              @click="a.run"
+              class="w-full flex items-center gap-4 px-3 py-3 rounded-md hover:bg-white/10 active:bg-white/10 transition text-left"
+            >
+              <component :is="a.icon" class="w-5 h-5 text-[#a3b3aa] shrink-0" />
+              <span class="text-sm font-medium">{{ a.label }}</span>
             </button>
           </div>
         </div>
@@ -2409,7 +2626,7 @@ watch(
             <h3 class="text-lg font-bold flex items-center gap-2"><Moon class="w-5 h-5" /> Timer tidur</h3>
             <button @click="showSleep = false" aria-label="Tutup" class="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center"><X class="w-5 h-5" /></button>
           </div>
-          <p v-if="sleepActive" class="px-5 pb-2 text-sm text-[#f5cf5b]">Aktif: {{ sleepLabel }}</p>
+          <p v-if="sleepActive" class="px-5 pb-2 text-sm text-(--accent)">Aktif: {{ sleepLabel }}</p>
           <div class="p-3 pt-1">
             <button v-for="m in [15, 30, 45, 60]" :key="m" @click="startSleep(m)" class="w-full text-left px-3 py-3 rounded-md hover:bg-white/10 text-sm font-medium transition">{{ m }} menit</button>
             <button @click="sleepAfterTrack" class="w-full text-left px-3 py-3 rounded-md hover:bg-white/10 text-sm font-medium transition">Setelah lagu ini selesai</button>
@@ -2435,7 +2652,7 @@ watch(
           />
           <div class="flex justify-end gap-2 mt-5">
             <button type="button" @click="dialog = null" class="px-4 h-10 rounded-full text-sm font-bold hover:bg-white/10 transition">Batal</button>
-            <button type="submit" :disabled="!dialog.value.trim()" class="px-5 h-10 rounded-full bg-[#f5cf5b] text-black text-sm font-bold hover:bg-[#ffe27a] disabled:opacity-40 disabled:pointer-events-none transition">Simpan</button>
+            <button type="submit" :disabled="!dialog.value.trim()" class="px-5 h-10 rounded-full bg-(--accent) text-black text-sm font-bold hover:brightness-110 disabled:opacity-40 disabled:pointer-events-none transition">Simpan</button>
           </div>
         </form>
       </div>
@@ -2458,11 +2675,12 @@ watch(
 <style scoped>
 /* Poles dasar */
 .app {
+  --accent: #f5cf5b;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 .app ::selection {
-  background: #f5cf5b;
+  background: var(--accent);
   color: #000;
 }
 /* Tailwind v4 membuat tombol berkursor panah; kembalikan jadi tangan */
@@ -2476,7 +2694,7 @@ watch(
 }
 /* Cincin fokus untuk pengguna keyboard */
 .app :is(button, a, input, [tabindex]):focus-visible {
-  outline: 2px solid #f5cf5b;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .app input[type='text']:focus-visible {
@@ -2510,7 +2728,7 @@ watch(
 }
 .range:hover,
 .range:active {
-  --fill: #f5cf5b;
+  --fill: var(--accent);
 }
 .range-lg {
   height: 6px;
@@ -2610,7 +2828,7 @@ watch(
   width: 3px;
   height: 30%;
   border-radius: 2px;
-  background: #f5cf5b;
+  background: var(--accent);
   animation: eq 0.9s ease-in-out infinite;
 }
 .eq i:nth-child(2) {
@@ -2737,7 +2955,7 @@ watch(
   animation: drift 28s ease-in-out infinite alternate;
 }
 .aurora span:nth-child(1) {
-  background: radial-gradient(circle, rgba(245, 207, 91, 0.35), transparent 60%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 35%, transparent), transparent 60%);
   top: -25%;
   left: -35%;
 }
@@ -2773,8 +2991,13 @@ watch(
 /* Tombol putar emas dengan cahaya */
 .play-glow {
   color: #1a1400;
-  background: linear-gradient(135deg, #ffe27a, #f5cf5b 55%, #e0a82e);
-  box-shadow: 0 10px 30px -6px rgba(245, 207, 91, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 65%, white),
+    var(--accent) 55%,
+    color-mix(in srgb, var(--accent) 80%, black)
+  );
+  box-shadow: 0 10px 30px -6px color-mix(in srgb, var(--accent) 55%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 /* Scrollbar */
