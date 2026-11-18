@@ -191,9 +191,9 @@ const searchPlaceholder = computed(() => {
 })
 const hero = computed(() => player.tracks[0] ?? null)
 // Tanpa pencarian: 6 pilihan cepat. Dengan pencarian: hasil teratas + 4 lagu.
-const quickPicks = computed(() => (hasQuery.value ? [] : player.tracks.slice(0, 6)))
+const quickPicks = computed(() => (hasQuery.value ? [] : player.tracks.slice(1, 7)))
 const topSongs = computed(() => (hasQuery.value ? player.tracks.slice(1, 5) : []))
-const listStart = computed(() => (hasQuery.value ? 5 : 6))
+const listStart = computed(() => (hasQuery.value ? 5 : 7))
 const trending = computed(() => player.tracks.slice(listStart.value, listStart.value + 8))
 const restTracks = computed(() => player.tracks.slice(listStart.value + 8))
 const queueUpcoming = computed(() => player.queue.slice(player.currentIndex + 1, player.currentIndex + 51))
@@ -708,6 +708,14 @@ const repeatLabel = computed(() =>
 const toggleShuffle = () => player.toggleShuffle()
 const cycleRepeat = () => player.cycleRepeat()
 const nextTrack = () => player.playNext()
+
+// Beranda: putar acak dari daftar yang sedang tampil
+function playShuffled() {
+  const list = player.tracks
+  if (!list.length) return
+  if (!player.shuffle) player.toggleShuffle()
+  player.playTrack(list[Math.floor(Math.random() * list.length)], list)
+}
 
 // Tombol play besar di halaman koleksi
 const libraryIsPlaying = computed(
@@ -1244,6 +1252,7 @@ watch(
 
           <!-- Warna latar dinamis dari cover lagu -->
           <div class="pointer-events-none absolute inset-x-0 top-0 h-96 overflow-hidden">
+            <div class="absolute inset-0 bg-[radial-gradient(70%_90%_at_15%_0%,rgba(245,207,91,0.14),transparent_70%),radial-gradient(60%_80%_at_95%_10%,rgba(45,212,191,0.10),transparent_70%)]"></div>
             <Transition name="ambient">
               <img
                 v-if="player.currentTrack"
@@ -1327,7 +1336,7 @@ watch(
                       @click="showAll"
                       :class="[
                         'shrink-0 rounded-full px-4 h-9 whitespace-nowrap text-sm font-medium transition',
-                        !hasQuery ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/15'
+                        !hasQuery ? 'bg-[#f5cf5b] text-black' : 'bg-white/10 hover:bg-white/15'
                       ]"
                     >
                       Semua
@@ -1338,14 +1347,14 @@ watch(
                       @click="pickMood(m)"
                       :class="[
                         'shrink-0 rounded-full px-4 h-9 whitespace-nowrap text-sm font-medium transition',
-                        activeChip === m.label ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/15'
+                        activeChip === m.label ? 'bg-[#f5cf5b] text-black' : 'bg-white/10 hover:bg-white/15'
                       ]"
                     >
                       {{ m.label }}
                     </button>
                   </div>
 
-                  <h2 v-if="!hasQuery" class="text-2xl md:text-3xl font-bold tracking-tight mb-4">{{ greeting }}</h2>
+                  <h2 v-if="!hasQuery" class="text-3xl md:text-4xl font-extrabold tracking-tight mb-5">{{ greeting }}</h2>
                   <h2 v-else class="text-2xl md:text-3xl font-bold tracking-tight mb-4 truncate">
                     {{ activeChip || `Hasil untuk "${player.searchQuery}"` }}
                   </h2>
@@ -1383,13 +1392,50 @@ watch(
                   </div>
 
                   <template v-else>
+                    <!-- Kartu unggulan (beranda) -->
+                    <article
+                      v-if="!hasQuery"
+                      @click="playOrToggle(hero, player.tracks)"
+                      class="rise group relative mb-4 md:mb-6 overflow-hidden rounded-2xl bg-[#16251e] ring-1 ring-white/10 cursor-pointer"
+                    >
+                      <img :src="hero.thumbnail_url" aria-hidden="true" class="ambient-blur opacity-70 pointer-events-none" />
+                      <div class="absolute inset-0 bg-linear-to-r from-[#0e1814]/90 via-[#0e1814]/55 to-[#0e1814]/15 pointer-events-none"></div>
+                      <div class="relative flex items-center gap-4 md:gap-6 p-4 md:p-6">
+                        <img :src="hero.thumbnail_url" :alt="hero.title" class="w-24 h-24 sm:w-36 sm:h-36 md:w-44 md:h-44 rounded-xl object-cover shrink-0 shadow-2xl shadow-black/60" />
+                        <div class="min-w-0 flex-1">
+                          <h3 class="text-xl sm:text-2xl md:text-4xl font-extrabold leading-tight tracking-tight line-clamp-2">{{ hero.title }}</h3>
+                          <p class="text-white/70 font-medium truncate mt-1">{{ hero.artist }}</p>
+                          <div class="flex flex-wrap items-center gap-2 mt-4">
+                            <button
+                              @click.stop="playOrToggle(hero, player.tracks)"
+                              class="play-glow h-11 pl-4 pr-5 rounded-full flex items-center gap-2 text-sm font-bold hover:scale-[1.03] active:scale-95 transition"
+                            >
+                              <Pause v-if="isActivePlaying(hero)" class="w-5 h-5" />
+                              <Play v-else class="w-5 h-5" />
+                              {{ isActivePlaying(hero) ? 'Jeda' : 'Putar' }}
+                            </button>
+                            <button @click.stop="playShuffled" aria-label="Putar acak" class="glass h-11 w-11 sm:w-auto sm:px-4 rounded-full flex items-center justify-center gap-2 text-sm font-bold hover:bg-white/20 active:scale-95 transition">
+                              <Shuffle class="w-4 h-4" /> <span class="hidden sm:inline">Acak</span>
+                            </button>
+                            <button @click.stop="player.toggleLike(hero)" aria-label="Sukai lagu" class="glass hidden sm:flex h-11 w-11 rounded-full items-center justify-center hover:bg-white/20 active:scale-90 transition">
+                              <Heart :class="['w-5 h-5 transition', isTrackLiked(hero.video_id) ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-white']" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+
                     <!-- Pilihan cepat (beranda) -->
                     <div v-if="!hasQuery" class="grid grid-cols-2 xl:grid-cols-3 gap-2 md:gap-3 mb-10">
                       <div
-                        v-for="track in quickPicks"
+                        v-for="(track, i) in quickPicks"
                         :key="'q-' + track.video_id"
                         @click="playOrToggle(track, player.tracks)"
-                        class="group relative flex items-center h-14 md:h-16 rounded-md overflow-hidden bg-white/[0.07] hover:bg-white/15 cursor-pointer transition"
+                        :style="{ '--d': 60 + i * 45 + 'ms' }"
+                        :class="[
+                          'rise group relative flex items-center h-14 md:h-16 rounded-md overflow-hidden hover:bg-white/15 cursor-pointer transition',
+                          isCurrent(track) ? 'bg-white/15 ring-1 ring-[#f5cf5b]/40' : 'bg-white/[0.07]'
+                        ]"
                       >
                         <img :src="track.thumbnail_url" :alt="track.title" class="h-full aspect-square object-cover shrink-0" />
                         <p :class="['flex-1 min-w-0 px-3 text-sm font-bold line-clamp-2 leading-tight', isCurrent(track) ? 'text-[#f5cf5b]' : '']">
@@ -1495,10 +1541,11 @@ watch(
                       <h3 class="text-xl md:text-2xl font-bold mb-3">{{ hasQuery ? 'Lagu lainnya' : 'Sedang naik daun' }}</h3>
                       <div v-drag-scroll class="flex gap-1 overflow-x-auto snap-x snap-mandatory no-scrollbar -mx-4 px-2 md:-mx-6 md:px-4 pb-2">
                         <div
-                          v-for="track in trending"
+                          v-for="(track, i) in trending"
                           :key="track.video_id"
                           @click="playOrToggle(track, player.tracks)"
-                          class="group snap-start shrink-0 w-36 sm:w-40 md:w-44 p-3 rounded-lg hover:bg-white/10 cursor-pointer transition"
+                          :style="{ '--d': i * 40 + 'ms' }"
+                          class="rise group snap-start shrink-0 w-36 sm:w-40 md:w-44 p-3 rounded-lg hover:bg-white/10 cursor-pointer transition"
                         >
                           <div class="relative aspect-square rounded-md overflow-hidden bg-white/5 shadow-lg shadow-black/40">
                             <img :src="track.thumbnail_url" :alt="track.title" loading="lazy" class="w-full h-full object-cover" />
@@ -1733,18 +1780,26 @@ watch(
 
           <template v-if="player.currentTrack">
             <div class="relative px-2 pt-2">
-              <img :src="player.currentTrack.thumbnail_url" aria-hidden="true" class="cover-glow" />
-              <img
-                :src="player.currentTrack.thumbnail_url"
-                :alt="player.currentTrack.title"
-                class="cover-frame relative w-full aspect-square object-cover rounded-2xl ring-1 ring-white/10"
-              />
+              <Transition name="swap" mode="out-in">
+                <div :key="player.currentTrack.video_id" class="relative">
+                  <img :src="player.currentTrack.thumbnail_url" aria-hidden="true" class="cover-glow" />
+                  <img
+                    :src="player.currentTrack.thumbnail_url"
+                    :alt="player.currentTrack.title"
+                    class="cover-frame relative w-full aspect-square object-cover rounded-2xl ring-1 ring-white/10"
+                  />
+                </div>
+              </Transition>
             </div>
 
             <div class="relative flex items-start gap-2 mt-1">
               <div class="min-w-0 flex-1">
-                <h3 class="text-2xl font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
-                <p class="text-white/70 font-medium truncate mt-1">{{ player.currentTrack.artist }}</p>
+                <Transition name="swap" mode="out-in">
+                  <div :key="player.currentTrack.video_id">
+                    <h3 class="text-2xl font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
+                    <p class="text-white/70 font-medium truncate mt-1">{{ player.currentTrack.artist }}</p>
+                  </div>
+                </Transition>
               </div>
               <button @click="player.toggleLike(player.currentTrack)" aria-label="Sukai lagu" class="glass w-10 h-10 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition">
                 <Heart :class="['w-5 h-5 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-white']" />
@@ -2038,7 +2093,7 @@ watch(
             <div :style="coverSize" class="relative max-w-full aspect-square">
               <img v-if="shownCover" :src="shownCover.url" aria-hidden="true" class="cover-glow" />
               <div class="cover-frame relative w-full h-full rounded-2xl overflow-hidden bg-[#16251e] ring-1 ring-white/10">
-                <Transition :name="coverDir === 'prev' ? 'cover-prev' : 'cover-next'">
+                <Transition name="cover-fade" :duration="350">
                   <img v-if="shownCover" :key="shownCover.id" :src="shownCover.url" :alt="player.currentTrack.title" class="absolute inset-0 w-full h-full object-cover" />
                 </Transition>
               </div>
@@ -2048,8 +2103,12 @@ watch(
           <!-- Judul + suka -->
           <div class="shrink-0 flex items-center gap-3">
             <div class="flex-1 min-w-0">
-              <h3 class="text-[1.65rem] font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
-              <p class="text-white/70 font-medium truncate mt-0.5">{{ player.currentTrack.artist }}</p>
+              <Transition name="swap" mode="out-in">
+                <div :key="player.currentTrack.video_id">
+                  <h3 class="text-[1.65rem] font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
+                  <p class="text-white/70 font-medium truncate mt-0.5">{{ player.currentTrack.artist }}</p>
+                </div>
+              </Transition>
             </div>
             <button @click="player.toggleLike(player.currentTrack)" class="glass w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition shrink-0" aria-label="Sukai lagu">
               <Heart :class="['w-6 h-6 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b] scale-110' : 'text-white']" />
@@ -2591,22 +2650,37 @@ watch(
   opacity: 0;
 }
 
-/* Cover bergeser seperti carousel, tanpa opasitas, jadi tidak ada kilatan gelap */
-.cover-next-enter-active,
-.cover-next-leave-active,
-.cover-prev-enter-active,
-.cover-prev-leave-active {
-  transition: transform 0.4s cubic-bezier(0.22, 0.8, 0.28, 1);
-  will-change: transform;
-  backface-visibility: hidden;
+/* Ganti lagu: cover baru memudar masuk di atas yang lama (tanpa slide, tanpa kilatan gelap) */
+.cover-fade-enter-active {
+  transition: opacity 0.35s ease;
+  z-index: 1;
 }
-.cover-next-enter-from,
-.cover-prev-leave-to {
-  transform: translate3d(100%, 0, 0);
+.cover-fade-leave-active {
+  z-index: 0;
 }
-.cover-next-leave-to,
-.cover-prev-enter-from {
-  transform: translate3d(-100%, 0, 0);
+.cover-fade-enter-from {
+  opacity: 0;
+}
+/* Judul / artis: pudar keluar lalu pudar masuk */
+.swap-enter-active,
+.swap-leave-active {
+  transition: opacity 0.16s ease;
+}
+.swap-enter-from,
+.swap-leave-to {
+  opacity: 0;
+}
+
+/* Muncul halus saat beranda dimuat (satu kali, ringan) */
+.rise {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
 }
 
 /* Blur murah: gambar dirender kecil (1/16 piksel), diblur, lalu diperbesar 6x.
@@ -2709,7 +2783,8 @@ watch(
   .eq i {
     animation: none;
   }
-  .aurora span {
+  .aurora span,
+  .rise {
     animation: none;
   }
   .app *,
