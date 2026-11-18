@@ -121,7 +121,16 @@ let touchStartX = 0
 let debounceTimer = null
 let touchStartY = 0
 
-const genres = ['Tulus', 'Nadin Amizah', 'Lofi Chill', 'Pamungkas', 'Pop Indo']
+// Chip suasana. "Untuk kamu" dibuat dari artis yang paling sering kamu putar / sukai.
+const moods = [
+  { label: 'Untuk kamu', query: null },
+  { label: 'Santai', query: 'lagu santai indonesia' },
+  { label: 'Galau', query: 'lagu galau indonesia' },
+  { label: 'Semangat', query: 'lagu semangat indonesia' },
+  { label: 'Fokus', query: 'musik fokus belajar instrumental' },
+  { label: 'Tidur', query: 'musik pengantar tidur relaksasi' }
+]
+const activeChip = ref('')
 
 const navItems = computed(() => [
   {
@@ -166,7 +175,7 @@ const greeting = computed(() => {
   return 'Selamat malam'
 })
 
-const hasQuery = computed(() => searchInput.value.trim().length > 0)
+const hasQuery = computed(() => searchInput.value.trim().length > 0 || !!activeChip.value)
 // Di Jelajahi kolom cari mencari lagu baru; di halaman koleksi ia menyaring isi daftar
 const filterInput = ref('')
 const inLibrary = computed(() => activeTab.value !== 'explore')
@@ -518,6 +527,7 @@ function handleSearchInput(e) {
     return
   }
   searchInput.value = value
+  activeChip.value = ''
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     if (searchInput.value.trim()) player.searchMusic(searchInput.value)
@@ -537,6 +547,7 @@ function clearSearch() {
     filterInput.value = ''
   } else {
     searchInput.value = ''
+    activeChip.value = ''
     player.searchMusic('Top Hits Indonesia')
   }
   searchInputEl.value?.focus()
@@ -551,10 +562,28 @@ function onSearchBlur() {
   if (!activeQueryText.value.trim()) mobileSearchOpen.value = false
 }
 
-function pickGenre(name) {
+// Artis yang paling sering muncul di lagu disukai + terakhir diputar
+function forYouQuery() {
+  const counts = new Map()
+  for (const t of [...player.likedTracks, ...player.recentTracks]) {
+    const a = (t.artist || '').split(/\s*(?:,|&|\bfeat\.?\b|\bft\.?\b)\s*/i)[0].trim()
+    if (a) counts.set(a, (counts.get(a) || 0) + 1)
+  }
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
+  return top ? `${top[0]} lagu terbaik` : 'lagu hits indonesia terbaru'
+}
+
+function pickMood(m) {
   activeTab.value = 'explore'
-  searchInput.value = name
-  submitSearch()
+  activeChip.value = m.label
+  searchInput.value = ''
+  player.searchMusic(m.query || forYouQuery())
+}
+
+function showAll() {
+  activeChip.value = ''
+  searchInput.value = ''
+  player.searchMusic('Top Hits Indonesia')
 }
 
 function formatTime(sec) {
@@ -784,6 +813,16 @@ function ensureHead() {
   if (!document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')) add('meta', { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' })
   const vp = document.querySelector('meta[name="viewport"]')
   if (vp && !vp.content.includes('viewport-fit')) vp.content += ', viewport-fit=cover'
+
+  // Terpasang sebagai aplikasi: matikan zoom cubit / ketuk dua kali agar terasa seperti aplikasi asli.
+  // Di tab browser biasa zoom dibiarkan aktif demi aksesibilitas.
+  if (isStandalone) {
+    if (vp && !/maximum-scale|user-scalable/.test(vp.content)) vp.content += ', maximum-scale=1, user-scalable=no'
+    document.documentElement.style.touchAction = 'manipulation'
+    document.addEventListener('gesturestart', e => e.preventDefault()) // iOS
+  }
+  // Tarik ke bawah tidak memuat ulang halaman (mengganggu gestur menutup layar penuh)
+  document.documentElement.style.overscrollBehaviorY = 'contain'
 }
 
 function setupPwa() {
@@ -867,19 +906,78 @@ const vDragScroll = {
   }
 }
 
-// Geser ke bawah = tutup layar penuh, geser kiri / kanan = lagu berikutnya / sebelumnya
-function onTouchStart(e) {
-  touchStartY = e.touches[0].clientY
-  touchStartX = e.touches[0].clientX
+/* ==========================================================
+   GESTUR: swipe atas membuka layar penuh, swipe bawah menutupnya
+   ========================================================== */
+const sheetDrag = ref(0) // jarak layar penuh mengikuti jari (px)
+const sheetDragging = ref(false)
+let gX = 0
+let gY = 0
+let gT = 0
+let gMode = '' // '' = belum jelas | 'v' = vertikal | 'h' = horizontal | 'skip' = mulai dari slider
+
+function openNowPlaying() {
+  sheetDrag.value = 0
+  showNowPlaying.value = true
 }
-function onTouchEnd(e) {
-  const dy = e.changedTouches[0].clientY - touchStartY
-  const dx = e.changedTouches[0].clientX - touchStartX
-  if (dy > 90 && dy > Math.abs(dx)) showNowPlaying.value = false
-  else if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-    if (dx < 0) player.playNext()
-    else player.playPrev()
+function closeNowPlaying() {
+  showNowPlaying.value = false
+  sheetDrag.value = 0
+}
+
+// Mini-player: geser ke atas = buka (mengetuk tetap membuka)
+function miniTouchStart(e) {
+  gX = e.touches[0].clientX
+  gY = e.touches[0].clientY
+}
+function miniTouchEnd(e) {
+  const dy = e.changedTouches[0].clientY - gY
+  const dx = e.changedTouches[0].clientX - gX
+  if (dy < -40 && Math.abs(dy) > Math.abs(dx)) openNowPlaying()
+}
+
+// Layar penuh: tarik ke bawah (mengikuti jari) = tutup, geser kiri / kanan = lagu berikutnya / sebelumnya
+function npTouchStart(e) {
+  const t = e.touches[0]
+  gX = t.clientX
+  gY = t.clientY
+  gT = Date.now()
+  gMode = e.target.closest?.('input[type="range"]') ? 'skip' : ''
+}
+function npTouchMove(e) {
+  if (gMode === 'skip') return
+  const t = e.touches[0]
+  const dx = t.clientX - gX
+  const dy = t.clientY - gY
+  if (!gMode) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+    gMode = Math.abs(dy) > Math.abs(dx) ? 'v' : 'h'
+    if (gMode === 'v') sheetDragging.value = true
   }
+  if (gMode === 'v') sheetDrag.value = Math.max(0, dy)
+}
+function npTouchEnd(e) {
+  const mode = gMode
+  gMode = ''
+  sheetDragging.value = false
+  if (mode === 'v') {
+    const dy = e.changedTouches[0].clientY - gY
+    const speed = dy / Math.max(1, Date.now() - gT) // px per ms
+    if (dy > 120 || (dy > 40 && speed > 0.6)) closeNowPlaying()
+    else sheetDrag.value = 0
+  } else if (mode === 'h') {
+    const dx = e.changedTouches[0].clientX - gX
+    const dy = e.changedTouches[0].clientY - gY
+    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (dx < 0) player.playNext()
+      else player.playPrev()
+    }
+  }
+}
+function npTouchCancel() {
+  gMode = ''
+  sheetDragging.value = false
+  sheetDrag.value = 0
 }
 
 /* ==========================================================
@@ -1072,7 +1170,7 @@ watch(
                   <!-- Filter chips -->
                   <div v-drag-scroll class="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 md:-mx-6 md:px-6 py-1 mt-2 md:mt-1 mb-5">
                     <button
-                      @click="clearSearch"
+                      @click="showAll"
                       :class="[
                         'shrink-0 rounded-full px-4 h-9 whitespace-nowrap text-sm font-medium transition',
                         !hasQuery ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/15'
@@ -1081,21 +1179,21 @@ watch(
                       Semua
                     </button>
                     <button
-                      v-for="g in genres"
-                      :key="g"
-                      @click="pickGenre(g)"
+                      v-for="m in moods"
+                      :key="m.label"
+                      @click="pickMood(m)"
                       :class="[
                         'shrink-0 rounded-full px-4 h-9 whitespace-nowrap text-sm font-medium transition',
-                        player.searchQuery === g ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/15'
+                        activeChip === m.label ? 'bg-white text-black' : 'bg-white/10 hover:bg-white/15'
                       ]"
                     >
-                      {{ g }}
+                      {{ m.label }}
                     </button>
                   </div>
 
                   <h2 v-if="!hasQuery" class="text-2xl md:text-3xl font-bold tracking-tight mb-4">{{ greeting }}</h2>
                   <h2 v-else class="text-2xl md:text-3xl font-bold tracking-tight mb-4 truncate">
-                    Hasil untuk "{{ player.searchQuery }}"
+                    {{ activeChip || `Hasil untuk "${player.searchQuery}"` }}
                   </h2>
 
                   <!-- Loading skeleton -->
@@ -1650,8 +1748,10 @@ watch(
       <!-- ============ MOBILE MINI PLAYER ============ -->
       <div
         v-if="player.currentTrack"
-        @click="showNowPlaying = true"
-        class="md:hidden mx-2 mb-1 rounded-lg bg-[#213229] overflow-hidden shrink-0 cursor-pointer shadow-lg shadow-black/50"
+        @click="openNowPlaying"
+        @touchstart.passive="miniTouchStart"
+        @touchend.passive="miniTouchEnd"
+        class="md:hidden mx-2 mb-1 rounded-lg bg-[#213229] overflow-hidden shrink-0 cursor-pointer touch-pan-x shadow-lg shadow-black/50"
       >
         <div class="flex items-center gap-3 p-2 pr-3">
           <div class="relative w-11 h-11 rounded overflow-hidden shrink-0">
@@ -1720,7 +1820,15 @@ watch(
     >
       <div
         v-if="showNowPlaying && player.currentTrack"
-        class="md:hidden fixed inset-0 z-50 flex flex-col bg-[#0e1814] overflow-hidden"
+        @touchstart.passive="npTouchStart"
+        @touchmove.passive="npTouchMove"
+        @touchend.passive="npTouchEnd"
+        @touchcancel.passive="npTouchCancel"
+        :style="{
+          transform: sheetDrag ? `translateY(${sheetDrag}px)` : undefined,
+          transition: sheetDragging ? 'none' : undefined
+        }"
+        class="md:hidden fixed inset-0 z-50 flex flex-col bg-[#0e1814] overflow-hidden touch-none transition-transform"
       >
         <img
           :src="player.currentTrack.thumbnail_url"
@@ -1729,12 +1837,9 @@ watch(
         <div class="absolute inset-0 bg-linear-to-b from-black/10 via-black/50 to-black/90 pointer-events-none"></div>
 
         <div class="relative flex-1 flex flex-col px-6 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] min-h-0">
-          <!-- Header + cover = zona geser ke bawah untuk menutup -->
-          <div
-            @touchstart.passive="onTouchStart"
-            @touchend.passive="onTouchEnd"
-            class="shrink-0 flex items-center justify-between"
-          >
+          <!-- Gagang kecil: petunjuk bahwa layar ini bisa ditarik ke bawah untuk menutup -->
+          <div class="shrink-0 mx-auto mb-1 h-1 w-10 rounded-full bg-white/30"></div>
+          <div class="shrink-0 flex items-center justify-between">
             <button @click="showNowPlaying = false" class="p-2 -ml-2" aria-label="Tutup">
               <ChevronDown class="w-7 h-7" />
             </button>
@@ -1742,11 +1847,7 @@ watch(
             <span class="w-7"></span>
           </div>
 
-          <div
-            @touchstart.passive="onTouchStart"
-            @touchend.passive="onTouchEnd"
-            class="flex-1 min-h-0 py-4 flex items-center justify-center overflow-hidden"
-          >
+          <div class="flex-1 min-h-0 py-4 flex items-center justify-center overflow-hidden">
             <img
               :src="player.currentTrack.thumbnail_url"
               :alt="player.currentTrack.title"
