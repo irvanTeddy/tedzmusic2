@@ -259,6 +259,15 @@ const progressPct = computed(() =>
 // Ukuran cover di layar penuh mobile mengikuti tinggi layar agar tidak menimpa teks
 const coverSize = { width: 'clamp(9rem, calc(100dvh - 26rem), 24rem)' }
 
+// Arah pergantian lagu menentukan arah animasi cover (berikutnya dari kanan, sebelumnya dari kiri)
+const coverDir = ref('next')
+watch(
+  () => player.currentIndex,
+  (n, o) => {
+    coverDir.value = n < o ? 'prev' : 'next'
+  }
+)
+
 /* ==========================================================
    LIRIK (LRCLIB, gratis tanpa API key)
    ========================================================== */
@@ -1830,10 +1839,13 @@ watch(
         }"
         class="md:hidden fixed inset-0 z-50 flex flex-col bg-[#0e1814] overflow-hidden touch-none transition-transform"
       >
-        <img
-          :src="player.currentTrack.thumbnail_url"
-          class="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-60 saturate-150 pointer-events-none"
-        />
+        <Transition name="ambient">
+          <img
+            :key="player.currentTrack.video_id"
+            :src="player.currentTrack.thumbnail_url"
+            class="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-60 saturate-150 pointer-events-none"
+          />
+        </Transition>
         <div class="absolute inset-0 bg-linear-to-b from-black/10 via-black/50 to-black/90 pointer-events-none"></div>
 
         <div class="relative flex-1 flex flex-col px-6 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] min-h-0">
@@ -1848,15 +1860,24 @@ watch(
           </div>
 
           <div class="flex-1 min-h-0 py-4 flex items-center justify-center overflow-hidden">
-            <img
-              :src="player.currentTrack.thumbnail_url"
-              :alt="player.currentTrack.title"
+            <!-- Bingkai tetap (skala mengikuti putar/jeda); cover di dalamnya bergeser mengikuti arah lagu -->
+            <div
               :style="coverSize"
               :class="[
-                'max-w-full aspect-square object-cover rounded-lg shadow-2xl shadow-black/60 transition-transform duration-500',
+                'relative max-w-full aspect-square rounded-lg bg-white/5 shadow-2xl shadow-black/60 transition-transform duration-500',
                 player.isPlaying ? 'scale-100' : 'scale-90'
               ]"
-            />
+            >
+              <Transition :name="coverDir === 'prev' ? 'cover-prev' : 'cover-next'">
+                <img
+                  :key="player.currentTrack.video_id"
+                  :src="player.currentTrack.thumbnail_url"
+                  :alt="player.currentTrack.title"
+                  decoding="async"
+                  class="absolute inset-0 w-full h-full object-cover rounded-lg"
+                />
+              </Transition>
+            </div>
           </div>
 
           <!-- Judul + lirik + suka -->
@@ -2399,6 +2420,27 @@ watch(
 }
 .ambient-enter-from,
 .ambient-leave-to {
+  opacity: 0;
+}
+
+/* Pergantian cover di layar penuh: bergeser sambil memudar, searah gestur */
+.cover-next-enter-active,
+.cover-next-leave-active,
+.cover-prev-enter-active,
+.cover-prev-leave-active {
+  transition:
+    transform 0.38s cubic-bezier(0.22, 0.8, 0.28, 1),
+    opacity 0.38s ease;
+  will-change: transform, opacity;
+}
+.cover-next-enter-from,
+.cover-prev-leave-to {
+  transform: translateX(48px) scale(0.94);
+  opacity: 0;
+}
+.cover-next-leave-to,
+.cover-prev-enter-from {
+  transform: translateX(-48px) scale(0.94);
   opacity: 0;
 }
 
