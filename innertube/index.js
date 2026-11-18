@@ -61,6 +61,39 @@ app.get('/search', async (req, res) => {
     }
 });
 
+// ==========================================
+// ENDPOINT BARU: MENGAMBIL AUDIO MURNI
+// ==========================================
+app.get('/stream', async (req, res) => {
+    try {
+        const videoId = req.query.id;
+        if (!videoId) return res.status(400).json({ error: 'ID lagu tidak diberikan' });
+
+        // Mengunduh stream audio mentah dari YouTube (format m4a yang support di semua HP)
+        const stream = await yt.download(videoId, {
+            type: 'audio', // Hanya ambil suara, hemat kuota
+            quality: 'best',
+            format: 'mp4' 
+        });
+
+        // Beri tahu browser bahwa ini adalah file musik yang bisa diputar
+        res.setHeader('Content-Type', 'audio/mp4');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        // Alirkan (pipe) data audio dari server YouTube -> VPS kamu -> HP pengguna
+        for await (const chunk of stream) {
+            res.write(chunk);
+        }
+        res.end();
+    } catch (error) {
+        console.error('Stream error:', error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Gagal mengambil audio' });
+        }
+    }
+});
+// ==========================================
+
 initYouTube().then(() => {
     app.listen(PORT, () => {
         console.log(`InnerTube service berjalan di http://localhost:${PORT}`);
