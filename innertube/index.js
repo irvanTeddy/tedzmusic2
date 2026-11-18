@@ -62,41 +62,70 @@ app.get('/search', async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINT BARU: MENGAMBIL AUDIO MURNI (FIXED - MP4 AAC)
+// ENDPOINT BARU: MENGAMBIL AUDIO MURNI (SMART PROXY RANGE)
 // ==========================================
 app.get('/stream', async (req, res) => {
     try {
         const videoId = req.query.id;
         if (!videoId) return res.status(400).json({ error: 'ID lagu tidak diberikan' });
 
-        // 1. Dapatkan info lagu dari YouTube
+        // 1. Dapatkan info lagu
         const info = await yt.getBasicInfo(videoId);
-        
-        // 2. PAKSA pilih format MP4 (AAC) karena paling kompatibel untuk semua HP & Browser
         const format = info.chooseFormat({ type: 'audio', format: 'mp4', quality: 'best' });
 
-        if (!format) {
+        if (!format || !format.url) {
             return res.status(404).json({ error: 'Format audio tidak ditemukan' });
         }
 
-        // 3. Berikan informasi LENGKAP ke browser (Tipe File + Codec + Ukuran File)
-        res.setHeader('Content-Type', format.mime_type); // Contoh: audio/mp4; codecs="mp4a.40.2"
-        if (format.content_length) {
-            res.setHeader('Content-Length', format.content_length);
+        // 2. Ambil URL audio mentah
+        const url = format.url;
+
+        // 3. Teruskan header Range dari HP pengguna ke YouTube
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        };
+        if (req.headers.range) {
+            headers['Range'] = req.headers.range; // Ini kunci agar HP mau mengeluarkan suara!
         }
 
-        // 4. Download dari YouTube dengan setelan yang sama
-        const stream = await yt.download(videoId, {
-            type: 'audio',
-            format: 'mp4',
-            quality: 'best'
+        // 4. Request audionya ke YouTube
+        const response = await fetch(url, { headers });
+
+        // 5. Beri tahu HP statusnya (bisa 206 Partial Content atau 200 OK)
+        res.status(response.status);
+
+        // 6. Copy header jawaban dari YouTube ke HP pengguna
+        const headersToPass = ['content-type', 'content-length', 'accept-ranges', 'content-range'];
+        headersToPass.forEach(h => {
+            if (response.headers.has(h)) {
+                res.setHeader(h, response.headers.get(h));
+            }
         });
 
-        // 5. Alirkan perlahan ke browser
-        for await (const chunk of stream) {
-            res.write(chunk);
+        // 7. Alirkan audionya. Jika HP tiba-tiba ditutup, stop aliran untuk hemat kuota VPS.
+        if (response.body) {
+            const reader = response.body.getReader();
+            
+            req.on('close', () => {
+                reader.cancel(); 
+            });
+
+            const pump = async () => {
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        res.write(value);
+                    }
+                    res.end();
+                } catch (err) {
+                    if (!res.writableEnded) res.end();
+                }
+            };
+            pump();
+        } else {
+            res.end();
         }
-        res.end();
     } catch (error) {
         console.error('Stream error:', error);
         if (!res.headersSent) {
