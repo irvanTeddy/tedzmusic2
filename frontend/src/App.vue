@@ -257,7 +257,7 @@ const progressPct = computed(() =>
 )
 
 // Ukuran cover di layar penuh mobile mengikuti tinggi layar agar tidak menimpa teks
-const coverSize = { width: 'clamp(9rem, calc(100dvh - 26rem), 24rem)' }
+const coverSize = { width: 'clamp(9rem, calc(100dvh - 31rem), 22rem)' }
 
 // Arah pergantian lagu menentukan arah animasi cover (berikutnya dari kanan, sebelumnya dari kiri)
 const coverDir = ref('next')
@@ -1703,51 +1703,74 @@ watch(
         </main>
 
         <!-- ============ RIGHT PANEL: NOW PLAYING (xl) ============ -->
-        <aside class="hidden xl:flex w-80 shrink-0 flex-col gap-4 rounded-lg bg-[#0e1814] p-4 overflow-hidden">
-          <p class="font-bold">Sedang diputar</p>
+        <aside class="relative hidden xl:flex w-80 shrink-0 flex-col gap-4 rounded-lg bg-[#0e1814] p-4 overflow-hidden">
+          <!-- Latar warna cover -->
+          <Transition name="ambient">
+            <img v-if="player.currentTrack" :key="player.currentTrack.video_id" :src="player.currentTrack.thumbnail_url" class="ambient-blur opacity-50 pointer-events-none" />
+          </Transition>
+          <div class="aurora pointer-events-none"><span></span><span></span></div>
+          <div class="absolute inset-0 bg-linear-to-b from-transparent via-[#0e1814]/60 to-[#0e1814] pointer-events-none"></div>
+
+          <p class="relative text-[11px] uppercase tracking-[0.2em] font-bold text-white/70">Sedang diputar</p>
 
           <template v-if="player.currentTrack">
-            <img
-              :src="player.currentTrack.thumbnail_url"
-              :alt="player.currentTrack.title"
-              class="w-full aspect-square object-cover rounded-lg shadow-2xl shadow-black/60"
-            />
+            <div class="relative px-2 pt-2">
+              <img :src="player.currentTrack.thumbnail_url" aria-hidden="true" class="cover-glow" />
+              <img
+                :src="player.currentTrack.thumbnail_url"
+                :alt="player.currentTrack.title"
+                :class="['cover-frame relative w-full aspect-square object-cover rounded-2xl ring-1 ring-white/10', player.isPlaying ? 'is-playing' : '']"
+              />
+            </div>
 
-            <div class="flex items-start gap-3">
+            <div class="relative flex items-start gap-2 mt-1">
               <div class="min-w-0 flex-1">
-                <h3 class="text-2xl font-bold leading-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
-                <p class="text-[#a3b3aa] truncate mt-1">{{ player.currentTrack.artist }}</p>
+                <h3 class="text-2xl font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
+                <p class="text-white/70 font-medium truncate mt-1">{{ player.currentTrack.artist }}</p>
               </div>
-              <button @click="player.toggleLike(player.currentTrack)" aria-label="Sukai lagu" class="p-1.5 shrink-0">
-                <Heart :class="['w-6 h-6 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-[#a3b3aa] hover:text-white']" />
+              <button @click="player.toggleLike(player.currentTrack)" aria-label="Sukai lagu" class="glass w-10 h-10 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition">
+                <Heart :class="['w-5 h-5 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-white']" />
               </button>
-              <button @click="openPicker(player.currentTrack)" aria-label="Tambahkan ke daftar putar" class="p-1.5 shrink-0 text-[#a3b3aa] hover:text-white">
-                <ListPlus class="w-6 h-6" />
+              <button @click="openPicker(player.currentTrack)" aria-label="Tambahkan ke daftar putar" class="glass w-10 h-10 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition">
+                <ListPlus class="w-5 h-5" />
               </button>
             </div>
 
-            <div class="flex-1 min-h-0 flex flex-col rounded-lg bg-[#16251e] p-4">
-              <p class="font-bold mb-2">Berikutnya</p>
-              <div v-if="upNext.length" class="flex-1 overflow-y-auto scroll-thin flex flex-col gap-1 -mx-2 px-2">
+            <!-- Lirik singkat -->
+            <button
+              v-if="lyricsStatus === 'synced' && activeLyricIndex >= 0"
+              @click="showLyrics = true"
+              class="relative glass rounded-xl px-4 py-3 text-left hover:bg-white/15 transition"
+            >
+              <p class="text-[10px] uppercase tracking-widest text-[#f5cf5b] font-bold mb-1">Lirik</p>
+              <Transition name="fade" mode="out-in">
+                <p :key="activeLyricIndex" class="text-sm font-semibold line-clamp-2">{{ lyricLines[activeLyricIndex].text || '♪' }}</p>
+              </Transition>
+            </button>
+
+            <!-- Berikutnya -->
+            <div class="relative flex-1 min-h-0 flex flex-col glass rounded-xl p-3">
+              <p class="text-sm font-bold mb-2 px-1">Berikutnya</p>
+              <div v-if="upNext.length" class="flex-1 overflow-y-auto scroll-thin flex flex-col gap-0.5">
                 <button
                   v-for="(track, i) in upNext"
                   :key="track.video_id + i"
                   @click="player.playTrack(track)"
-                  class="flex items-center gap-3 p-2 rounded-md hover:bg-white/10 transition text-left"
+                  class="flex items-center gap-3 p-2 rounded-lg hover:bg-white/10 transition text-left"
                 >
-                  <img :src="track.thumbnail_url" loading="lazy" class="w-10 h-10 rounded object-cover shrink-0" />
+                  <img :src="track.thumbnail_url" loading="lazy" class="w-10 h-10 rounded-md object-cover shrink-0" />
                   <div class="min-w-0">
-                    <p class="text-sm font-medium truncate">{{ track.title }}</p>
+                    <p class="text-sm font-semibold truncate">{{ track.title }}</p>
                     <p class="text-xs text-[#a3b3aa] truncate">{{ track.artist }}</p>
                   </div>
                 </button>
               </div>
-              <p v-else class="text-sm text-[#a3b3aa]">Tidak ada lagu berikutnya.</p>
+              <p v-else class="text-sm text-[#a3b3aa] px-1">Tidak ada lagu berikutnya.</p>
             </div>
           </template>
 
-          <div v-else class="flex-1 flex flex-col items-center justify-center text-center text-[#a3b3aa] gap-3">
-            <div class="w-20 h-20 rounded-lg bg-white/5 flex items-center justify-center">
+          <div v-else class="relative flex-1 flex flex-col items-center justify-center text-center text-[#a3b3aa] gap-3">
+            <div class="glass w-20 h-20 rounded-2xl flex items-center justify-center">
               <Music2 class="w-9 h-9" />
             </div>
             <p class="text-sm leading-relaxed">Pilih lagu untuk mulai memutar.<br />Detailnya muncul di sini.</p>
@@ -1964,124 +1987,116 @@ watch(
           transform: sheetDrag ? `translateY(${sheetDrag}px)` : undefined,
           transition: sheetDragging ? 'none' : undefined
         }"
-        class="md:hidden fixed inset-0 z-50 flex flex-col bg-[#0e1814] overflow-hidden touch-none transition-transform"
+        class="md:hidden fixed inset-0 z-50 flex flex-col bg-[#060d0a] overflow-hidden touch-none transition-transform"
       >
+        <!-- Latar: warna cover + cahaya bergerak -->
         <Transition name="ambient">
-          <img
-            v-if="shownCover"
-            :key="shownCover.id"
-            :src="shownCover.url"
-            class="ambient-blur opacity-60 pointer-events-none"
-          />
+          <img v-if="shownCover" :key="shownCover.id" :src="shownCover.url" class="ambient-blur opacity-70 pointer-events-none" />
         </Transition>
-        <div class="absolute inset-0 bg-linear-to-b from-black/10 via-black/50 to-black/90 pointer-events-none"></div>
+        <div class="aurora pointer-events-none"><span></span><span></span></div>
+        <div class="absolute inset-0 bg-linear-to-b from-black/20 via-black/40 to-black/95 pointer-events-none"></div>
 
         <div class="relative flex-1 flex flex-col px-6 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] min-h-0">
-          <!-- Gagang kecil: petunjuk bahwa layar ini bisa ditarik ke bawah untuk menutup -->
           <div class="shrink-0 mx-auto mb-1 h-1 w-10 rounded-full bg-white/30"></div>
+
+          <!-- Header -->
           <div class="shrink-0 flex items-center justify-between">
-            <button @click="showNowPlaying = false" class="p-2 -ml-2" aria-label="Tutup">
-              <ChevronDown class="w-7 h-7" />
+            <button @click="showNowPlaying = false" class="glass w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Tutup">
+              <ChevronDown class="w-6 h-6" />
             </button>
-            <p class="text-xs font-bold">Sedang diputar</p>
-            <span class="w-7"></span>
+            <div class="text-center">
+              <p class="text-[10px] uppercase tracking-[0.2em] text-white/60 font-bold">Sedang diputar</p>
+              <p v-if="player.queue.length" class="text-xs text-white/80 font-semibold mt-0.5">
+                {{ player.currentIndex + 1 }} dari {{ player.queue.length }}
+              </p>
+            </div>
+            <button @click="openPicker(player.currentTrack)" class="glass w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Tambahkan ke daftar putar">
+              <ListPlus class="w-5 h-5" />
+            </button>
           </div>
 
-          <div class="flex-1 min-h-0 py-4 flex items-center justify-center overflow-hidden">
-            <div
-              :style="coverSize"
-              class="relative max-w-full aspect-square rounded-lg overflow-hidden bg-[#16251e] shadow-2xl shadow-black/60"
-            >
-              <Transition :name="coverDir === 'prev' ? 'cover-prev' : 'cover-next'">
-                <img
-                  v-if="shownCover"
-                  :key="shownCover.id"
-                  :src="shownCover.url"
-                  :alt="player.currentTrack.title"
-                  class="absolute inset-0 w-full h-full object-cover"
-                />
-              </Transition>
+          <!-- Cover dengan cahaya -->
+          <div class="flex-1 min-h-0 py-4 flex items-center justify-center">
+            <div :style="coverSize" class="relative max-w-full aspect-square">
+              <img v-if="shownCover" :src="shownCover.url" aria-hidden="true" class="cover-glow" />
+              <div :class="['cover-frame relative w-full h-full rounded-2xl overflow-hidden bg-[#16251e] ring-1 ring-white/10', player.isPlaying ? 'is-playing' : '']">
+                <Transition :name="coverDir === 'prev' ? 'cover-prev' : 'cover-next'">
+                  <img v-if="shownCover" :key="shownCover.id" :src="shownCover.url" :alt="player.currentTrack.title" class="absolute inset-0 w-full h-full object-cover" />
+                </Transition>
+              </div>
             </div>
           </div>
 
-          <!-- Judul + lirik + suka -->
-          <div class="shrink-0 flex items-center gap-2">
+          <!-- Judul + suka -->
+          <div class="shrink-0 flex items-center gap-3">
             <div class="flex-1 min-w-0">
-              <h3 class="text-2xl font-bold truncate">{{ player.currentTrack.title }}</h3>
-              <p class="text-white/70 truncate">{{ player.currentTrack.artist }}</p>
+              <h3 class="text-[1.65rem] font-extrabold leading-tight tracking-tight line-clamp-2">{{ player.currentTrack.title }}</h3>
+              <p class="text-white/70 font-medium truncate mt-0.5">{{ player.currentTrack.artist }}</p>
             </div>
-            <button @click="openPicker(player.currentTrack)" class="p-2 rounded-full" aria-label="Tambahkan ke daftar putar">
-              <ListPlus class="w-6 h-6" />
-            </button>
-            <button @click="player.toggleLike(player.currentTrack)" class="p-2" aria-label="Sukai lagu">
-              <Heart :class="['w-7 h-7', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b]' : 'text-white']" />
+            <button @click="player.toggleLike(player.currentTrack)" class="glass w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition shrink-0" aria-label="Sukai lagu">
+              <Heart :class="['w-6 h-6 transition', player.isCurrentLiked ? 'text-[#f5cf5b] fill-[#f5cf5b] scale-110' : 'text-white']" />
             </button>
           </div>
+
+          <!-- Cuplikan lirik yang sedang dinyanyikan -->
+          <button
+            v-if="lyricsStatus === 'synced' && activeLyricIndex >= 0"
+            @click="showLyrics = true"
+            class="shrink-0 mt-3 glass rounded-xl px-4 py-2.5 text-left active:scale-[0.98] transition"
+          >
+            <Transition name="fade" mode="out-in">
+              <p :key="activeLyricIndex" class="text-sm font-semibold text-white/90 line-clamp-1">
+                {{ lyricLines[activeLyricIndex].text || '♪' }}
+              </p>
+            </Transition>
+          </button>
 
           <!-- Progress -->
           <div class="shrink-0 mt-4">
             <input
-              type="range"
-              min="0"
-              :max="player.duration || 100"
-              :value="player.currentTime"
-              :style="rangeStyle(progressPct)"
-              @input="e => player.seekTo(Number(e.target.value))"
+              type="range" min="0" :max="player.duration || 100" :value="player.currentTime"
+              :style="rangeStyle(progressPct)" @input="e => player.seekTo(Number(e.target.value))"
               class="range range-lg w-full"
             />
-            <div class="flex justify-between text-[11px] text-white/60 mt-1.5 tabular-nums">
+            <div class="flex justify-between text-[11px] text-white/60 mt-1.5 tabular-nums font-medium">
               <span>{{ formatTime(player.currentTime) }}</span>
               <span>{{ formatTime(player.duration) }}</span>
             </div>
           </div>
 
           <!-- Kontrol -->
-          <div class="shrink-0 flex items-center justify-center gap-4 mt-3">
-            <button @click="toggleShuffle" aria-label="Acak" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', shuffle ? 'text-[#f5cf5b]' : 'text-white/70']">
+          <div class="shrink-0 flex items-center justify-between mt-2">
+            <button @click="toggleShuffle" aria-label="Acak" :class="['relative w-11 h-11 flex items-center justify-center transition active:scale-90', shuffle ? 'text-[#f5cf5b]' : 'text-white/70']">
               <Shuffle class="w-5 h-5" />
-              <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+              <span v-if="shuffle" class="absolute bottom-1 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
             </button>
-            <button @click="player.playPrev" class="w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Sebelumnya">
-              <SkipBack class="w-8 h-8" />
+            <button @click="player.playPrev" class="w-14 h-14 flex items-center justify-center active:scale-90 transition" aria-label="Sebelumnya">
+              <SkipBack class="w-9 h-9" />
             </button>
-            <button
-              @click="player.togglePlay"
-              class="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center active:scale-95 transition"
-              aria-label="Putar/Jeda"
-            >
-              <Pause v-if="player.isPlaying" class="w-8 h-8" />
-              <Play v-else class="w-8 h-8" />
+            <button @click="player.togglePlay" class="play-glow w-[4.5rem] h-[4.5rem] rounded-full flex items-center justify-center active:scale-95 transition" aria-label="Putar/Jeda">
+              <Pause v-if="player.isPlaying" class="w-9 h-9" />
+              <Play v-else class="w-9 h-9" />
             </button>
-            <button @click="nextTrack" class="w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Berikutnya">
-              <SkipForward class="w-8 h-8" />
+            <button @click="nextTrack" class="w-14 h-14 flex items-center justify-center active:scale-90 transition" aria-label="Berikutnya">
+              <SkipForward class="w-9 h-9" />
             </button>
-            <button @click="cycleRepeat" :aria-label="repeatLabel" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-[#f5cf5b]' : 'text-white/70']">
+            <button @click="cycleRepeat" :aria-label="repeatLabel" :class="['relative w-11 h-11 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-[#f5cf5b]' : 'text-white/70']">
               <Repeat1 v-if="repeat === 'one'" class="w-5 h-5" />
               <Repeat v-else class="w-5 h-5" />
-              <span v-if="repeat !== 'off'" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+              <span v-if="repeat !== 'off'" class="absolute bottom-1 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
             </button>
           </div>
 
-          <!-- Volume -->
-          <div class="shrink-0 flex items-center gap-3 mt-5">
-            <button @click="player.toggleMute" class="text-white/70" aria-label="Bisukan">
-              <VolumeX v-if="player.isMuted || player.volume === 0" class="w-5 h-5" />
-              <Volume2 v-else class="w-5 h-5" />
+          <!-- Aksi bawah: kapsul kaca -->
+          <div class="shrink-0 grid grid-cols-3 gap-2 mt-5">
+            <button @click="showLyrics = true" class="glass h-11 rounded-full flex items-center justify-center gap-2 text-xs font-bold active:scale-95 transition">
+              <Mic class="w-4 h-4" /> Lirik
             </button>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              :value="player.isMuted ? 0 : player.volume"
-              :style="rangeStyle(player.isMuted ? 0 : player.volume)"
-              @input="e => player.setVolume(e.target.value)"
-              class="range flex-1"
-            />
-            <button @click="showLyrics = true" class="p-2 text-white/80" aria-label="Lirik"><Mic class="w-5 h-5" /></button>
-            <button @click="showQueue = true" class="p-2 text-white/80" aria-label="Antrean"><ListMusic class="w-5 h-5" /></button>
-            <button @click="showSleep = true" :class="['relative p-2', sleepActive ? 'text-[#f5cf5b]' : 'text-white/80']" aria-label="Timer tidur">
-              <Moon class="w-5 h-5" />
-              <span v-if="sleepActive" class="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-[#f5cf5b]"></span>
+            <button @click="showQueue = true" class="glass h-11 rounded-full flex items-center justify-center gap-2 text-xs font-bold active:scale-95 transition">
+              <ListMusic class="w-4 h-4" /> Antrean
+            </button>
+            <button @click="showSleep = true" :class="['glass h-11 rounded-full flex items-center justify-center gap-2 text-xs font-bold active:scale-95 transition', sleepActive ? 'text-[#f5cf5b]' : '']">
+              <Moon class="w-4 h-4" /> {{ sleepActive ? sleepLabel : 'Timer' }}
             </button>
           </div>
         </div>
@@ -2181,10 +2196,10 @@ watch(
             </div>
             <div class="flex items-center justify-center gap-4 mt-2">
               <button @click="toggleShuffle" aria-label="Acak" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', shuffle ? 'text-[#f5cf5b]' : 'text-white/70']">
-              <Shuffle class="w-5 h-5" />
-              <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
-            </button>
-            <button @click="player.playPrev" class="w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Sebelumnya">
+                <Shuffle class="w-5 h-5" />
+                <span v-if="shuffle" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+              </button>
+              <button @click="player.playPrev" class="w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Sebelumnya">
                 <SkipBack class="w-7 h-7" />
               </button>
               <button
@@ -2198,11 +2213,11 @@ watch(
               <button @click="nextTrack" class="w-12 h-12 rounded-full flex items-center justify-center active:scale-90 transition" aria-label="Berikutnya">
                 <SkipForward class="w-7 h-7" />
               </button>
-            <button @click="cycleRepeat" :aria-label="repeatLabel" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-[#f5cf5b]' : 'text-white/70']">
-              <Repeat1 v-if="repeat === 'one'" class="w-5 h-5" />
-              <Repeat v-else class="w-5 h-5" />
-              <span v-if="repeat !== 'off'" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
-            </button>
+              <button @click="cycleRepeat" :aria-label="repeatLabel" :class="['relative w-10 h-10 flex items-center justify-center transition active:scale-90', repeat !== 'off' ? 'text-[#f5cf5b]' : 'text-white/70']">
+                <Repeat1 v-if="repeat === 'one'" class="w-5 h-5" />
+                <Repeat v-else class="w-5 h-5" />
+                <span v-if="repeat !== 'off'" class="absolute bottom-0 w-1 h-1 rounded-full bg-[#f5cf5b]"></span>
+              </button>
             </div>
           </div>
         </div>
@@ -2586,6 +2601,76 @@ watch(
   mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
 }
 
+/* Kaca */
+.glass {
+  background: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Cahaya aurora bergerak (ringan: hanya gradien + transform) */
+.aurora {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  mix-blend-mode: screen;
+  opacity: 0.55;
+}
+.aurora span {
+  position: absolute;
+  width: 70vmax;
+  height: 70vmax;
+  border-radius: 50%;
+  will-change: transform;
+  animation: drift 18s ease-in-out infinite alternate;
+}
+.aurora span:nth-child(1) {
+  background: radial-gradient(circle, rgba(245, 207, 91, 0.35), transparent 60%);
+  top: -25%;
+  left: -35%;
+}
+.aurora span:nth-child(2) {
+  background: radial-gradient(circle, rgba(45, 212, 191, 0.28), transparent 60%);
+  bottom: -30%;
+  right: -40%;
+  animation-duration: 24s;
+  animation-direction: alternate-reverse;
+}
+@keyframes drift {
+  to {
+    transform: translate3d(12%, 8%, 0) scale(1.15);
+  }
+}
+
+/* Cover: bercahaya, mengecil saat jeda, membesar saat diputar */
+.cover-glow {
+  position: absolute;
+  inset: 6% 4% -4%;
+  width: 92%;
+  height: 92%;
+  object-fit: cover;
+  border-radius: 1.25rem;
+  filter: blur(28px) saturate(1.6);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.cover-frame {
+  box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.7);
+  transition: transform 0.5s cubic-bezier(0.3, 1.3, 0.5, 1);
+  transform: scale(0.88);
+}
+.cover-frame.is-playing {
+  transform: scale(1);
+}
+
+/* Tombol putar emas dengan cahaya */
+.play-glow {
+  color: #1a1400;
+  background: linear-gradient(135deg, #ffe27a, #f5cf5b 55%, #e0a82e);
+  box-shadow: 0 10px 30px -6px rgba(245, 207, 91, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
 /* Scrollbar */
 .scroll-thin {
   scrollbar-width: thin;
@@ -2600,6 +2685,9 @@ watch(
 
 @media (prefers-reduced-motion: reduce) {
   .eq i {
+    animation: none;
+  }
+  .aurora span {
     animation: none;
   }
   .app *,
