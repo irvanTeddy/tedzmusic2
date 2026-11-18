@@ -62,75 +62,31 @@ app.get('/search', async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINT BARU: MENGAMBIL AUDIO MURNI (SMART PROXY RANGE)
+// ENDPOINT BARU: DIRECT BYPASS (JURUS PAMUNGKAS)
 // ==========================================
 app.get('/stream', async (req, res) => {
     try {
         const videoId = req.query.id;
         if (!videoId) return res.status(400).json({ error: 'ID lagu tidak diberikan' });
 
-        // 1. Dapatkan info lagu
+        // 1. Dapatkan info lagu dari YouTube
         const info = await yt.getBasicInfo(videoId);
+        
+        // 2. Pilih format MP4 AAC
         const format = info.chooseFormat({ type: 'audio', format: 'mp4', quality: 'best' });
 
         if (!format || !format.url) {
             return res.status(404).json({ error: 'Format audio tidak ditemukan' });
         }
 
-        // 2. Ambil URL audio mentah
-        const url = format.url;
+        // 3. JURUS PAMUNGKAS:
+        // Arahkan (Redirect) HP pengguna langsung ke server asli Google/YouTube!
+        // Ini akan membereskan semua masalah "bisu" dan "range request".
+        res.redirect(format.url);
 
-        // 3. Teruskan header Range dari HP pengguna ke YouTube
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        };
-        if (req.headers.range) {
-            headers['Range'] = req.headers.range; // Ini kunci agar HP mau mengeluarkan suara!
-        }
-
-        // 4. Request audionya ke YouTube
-        const response = await fetch(url, { headers });
-
-        // 5. Beri tahu HP statusnya (bisa 206 Partial Content atau 200 OK)
-        res.status(response.status);
-
-        // 6. Copy header jawaban dari YouTube ke HP pengguna
-        const headersToPass = ['content-type', 'content-length', 'accept-ranges', 'content-range'];
-        headersToPass.forEach(h => {
-            if (response.headers.has(h)) {
-                res.setHeader(h, response.headers.get(h));
-            }
-        });
-
-        // 7. Alirkan audionya. Jika HP tiba-tiba ditutup, stop aliran untuk hemat kuota VPS.
-        if (response.body) {
-            const reader = response.body.getReader();
-            
-            req.on('close', () => {
-                reader.cancel(); 
-            });
-
-            const pump = async () => {
-                try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        res.write(value);
-                    }
-                    res.end();
-                } catch (err) {
-                    if (!res.writableEnded) res.end();
-                }
-            };
-            pump();
-        } else {
-            res.end();
-        }
     } catch (error) {
         console.error('Stream error:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ error: 'Gagal mengambil audio' });
-        }
+        res.status(500).json({ error: 'Gagal mengambil audio' });
     }
 });
 // ==========================================
