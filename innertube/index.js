@@ -62,25 +62,36 @@ app.get('/search', async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINT BARU: MENGAMBIL AUDIO MURNI
+// ENDPOINT BARU: MENGAMBIL AUDIO MURNI (FIXED)
 // ==========================================
 app.get('/stream', async (req, res) => {
     try {
         const videoId = req.query.id;
         if (!videoId) return res.status(400).json({ error: 'ID lagu tidak diberikan' });
 
-        // Mengunduh stream audio mentah dari YouTube (format m4a yang support di semua HP)
+        // 1. Dapatkan info lagu dari YouTube untuk tahu format aslinya
+        const info = await yt.getBasicInfo(videoId);
+        const format = info.chooseFormat({ type: 'audio', quality: 'best' });
+
+        if (!format) {
+            return res.status(404).json({ error: 'Format audio tidak ditemukan' });
+        }
+
+        // 2. Download aliran audio sesuai setelan terbaik
         const stream = await yt.download(videoId, {
-            type: 'audio', // Hanya ambil suara, hemat kuota
+            type: 'audio',
             quality: 'best',
-            format: 'mp4' 
+            format: 'any' // Biarkan YouTube mengirim format aslinya
         });
 
-        // Beri tahu browser bahwa ini adalah file musik yang bisa diputar
-        res.setHeader('Content-Type', 'audio/mp4');
+        // 3. Ambil tipe MIME asli (misal: 'audio/mp4' atau 'audio/webm')
+        const mimeType = format.mime_type ? format.mime_type.split(';')[0] : 'audio/mp4';
+        
+        // 4. Beri tahu browser tipe data yang BENAR
+        res.setHeader('Content-Type', mimeType);
         res.setHeader('Transfer-Encoding', 'chunked');
 
-        // Alirkan (pipe) data audio dari server YouTube -> VPS kamu -> HP pengguna
+        // Alirkan ke HP pengguna
         for await (const chunk of stream) {
             res.write(chunk);
         }
