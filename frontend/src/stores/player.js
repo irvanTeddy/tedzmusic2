@@ -81,6 +81,11 @@ export const usePlayerStore = defineStore('player', () => {
     let errorStreak = 0
     let errorTimer = null
     let saveTick = 0
+    let loadTimer = null // jeda senyap sebelum lagu baru dimuat
+    let userPaused = false // true bila jeda datang dari pengguna / tombol notifikasi
+    let hiddenAt = 0 // kapan halaman terakhir masuk latar belakang
+    let autoResumeTries = 0
+    let visibilityBound = false
 
     const currentTrack = computed(() => {
         if (currentIndex.value >= 0 && currentIndex.value < queue.value.length) {
@@ -124,6 +129,9 @@ export const usePlayerStore = defineStore('player', () => {
         fadeTimer = null
     }
 
+    // Kurva "smoothstep": mulai dan berakhir landai, tanpa patahan yang terdengar seperti klik
+    const smooth = t => t * t * (3 - 2 * t)
+
     function fade(from, to, ms, done) {
         clearFade()
         if (!ytPlayer || !isReady.value) return done?.()
@@ -132,23 +140,82 @@ export const usePlayerStore = defineStore('player', () => {
             applyVol(to)
             return done?.()
         }
-        const steps = Math.max(1, Math.round(ms / 20))
+        const steps = Math.max(1, Math.round(ms / 16))
         let i = 0
         fadeTimer = setInterval(() => {
             i++
-            applyVol(Math.round(from + ((to - from) * i) / steps))
+            applyVol(Math.round(from + (to - from) * smooth(i / steps)))
             if (i >= steps) {
                 clearFade()
                 done?.()
             }
-        }, 20)
+        }, 16)
     }
 
     // Kembalikan volume ke pengaturan pengguna (jeda, error, atau lagu selesai)
     function restoreVolume() {
         clearFade()
+        clearTimeout(loadTimer)
+        loadTimer = null
         pendingFadeIn = false
         applyVol(volume.value)
+    }
+
+    /* ---------- Latar belakang: jangkar Media Session ---------- */
+    // Pemutar YouTube ada di iframe lintas-origin, jadi browser bisa menampilkan notifikasi media
+    // tanpa tombol sebelumnya/berikutnya dan membekukan halaman saat layar mati. Audio senyap yang
+    // berputar di halaman utama membuat halaman ini "pemilik" sesi media (tombol notifikasi memakai
+    // handler kita) dan menjaga halaman tetap aktif di latar belakang.
+    let keepAliveEl = null
+
+    function silentWavUrl(seconds = 10, rate = 8000) {
+        const n = seconds * rate // 8-bit mono; durasi >= 5 detik agar browser menampilkan notifikasi
+        const buf = new ArrayBuffer(44 + n)
+        const v = new DataView(buf)
+        const tag = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)))
+        tag(0, 'RIFF')
+        v.setUint32(4, 36 + n, true)
+        tag(8, 'WAVE')
+        tag(12, 'fmt ')
+        v.setUint32(16, 16, true)
+        v.setUint16(20, 1, true) // PCM
+        v.setUint16(22, 1, true) // mono
+        v.setUint32(24, rate, true)
+        v.setUint32(28, rate, true) // byte/detik
+        v.setUint16(32, 1, true)
+        v.setUint16(34, 8, true)
+        tag(36, 'data')
+        v.setUint32(40, n, true)
+        new Uint8Array(buf, 44).fill(128) // 128 = hening untuk PCM 8-bit
+        return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
+    }
+
+    function setKeepAlive(on) {
+        try {
+            if (on) {
+                if (!keepAliveEl) {
+                    keepAliveEl = new Audio(silentWavUrl())
+                    keepAliveEl.loop = true
+                    keepAliveEl.preload = 'auto'
+                }
+                keepAliveEl.play()?.catch(() => {})
+            } else if (keepAliveEl) {
+                keepAliveEl.pause()
+            }
+        } catch {
+            /* browser menolak: abaikan */
+        }
+    }
+
+    function bindVisibility() {
+        if (visibilityBound || typeof document === 'undefined') return
+        visibilityBound = true
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                hiddenAt = Date.now()
+                autoResumeTries = 0
+            }
+        })
     }
 
     /* ---------- Media Session: kontrol layar kunci / notifikasi ---------- */
@@ -212,6 +279,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     // Inisialisasi Headless YouTube IFrame API
     function initYouTubePlayer(elementId = 'yt-hidden-player') {
+        bindVisibility()
         if (window.YT && window.YT.Player) {
             createPlayerInstance(elementId)
             return
@@ -249,8 +317,13 @@ export const usePlayerStore = defineStore('player', () => {
                 },
                 onStateChange: (event) => {
                     // 1 = PLAYING, 2 = PAUSED, 0 = ENDED
+                    // Lagu baru sedang dimuat: pastikan tetap senyap (pemutar YouTube bisa mengembalikan volumenya sendiri)
+                    if (pendingFadeIn && (event.data === -1 || event.data === window.YT.PlayerState.BUFFERING)) applyVol(0)
                     if (event.data === window.YT.PlayerState.PLAYING) {
                         errorStreak = 0
+                        userPaused = false
+                        autoResumeTries = 0
+                        setKeepAlive(true)
                         isPlaying.value = true
                         duration.value = ytPlayer.getDuration() || currentTrack.value?.duration || 0
                         currentTime.value = ytPlayer.getCurrentTime() || currentTime.value
@@ -259,15 +332,24 @@ export const usePlayerStore = defineStore('player', () => {
                         if (pendingFadeIn) {
                             // Lagu baru sudah benar-benar mulai: naikkan volume perlahan
                             pendingFadeIn = false
-                            fade(liveVol, volume.value, 250)
+                            fade(liveVol, volume.value, 320)
                         }
                         startProgressLoop()
                     } else if (event.data === window.YT.PlayerState.PAUSED) {
+                        // YouTube kadang menjeda sendiri begitu halaman masuk latar belakang (layar mati / pindah aplikasi).
+                        // Coba lanjutkan, tapi hanya dalam 2,5 detik setelah halaman disembunyikan agar tidak melawan
+                        // jeda sungguhan (telepon masuk, headphone dicabut).
+                        if (!userPaused && document.hidden && Date.now() - hiddenAt < 2500 && autoResumeTries < 2) {
+                            autoResumeTries++
+                            ytPlayer.playVideo()
+                            return
+                        }
                         isPlaying.value = false
                         currentTime.value = ytPlayer.getCurrentTime() || currentTime.value
                         setPlaybackState('paused')
                         syncPositionState()
                         stopProgressLoop()
+                        setKeepAlive(false)
                         saveSession()
                     } else if (event.data === window.YT.PlayerState.ENDED) {
                         stopProgressLoop()
@@ -276,6 +358,7 @@ export const usePlayerStore = defineStore('player', () => {
                             // Timer tidur "akhir lagu ini": berhenti di sini
                             stopAfterTrack.value = false
                             isPlaying.value = false
+                            setKeepAlive(false)
                             setPlaybackState('paused')
                             currentTime.value = 0
                             loadedVideoId = ''
@@ -301,6 +384,7 @@ export const usePlayerStore = defineStore('player', () => {
                     if (errorStreak >= 3 || queue.value.length <= 1) {
                         errorStreak = 0
                         isPlaying.value = false
+                        setKeepAlive(false)
                         setPlaybackState('paused')
                         stopProgressLoop()
                         flashError('Lagu tidak bisa diputar. Coba lagu lain atau periksa koneksi internetmu.')
@@ -368,16 +452,30 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     // Muat sebuah lagu ke pemutar YouTube: redam yang sedang bunyi, muat, lalu naikkan perlahan
+    // Urutan saat lagu sedang bunyi: fade-out halus -> diam sebentar (membuang sisa audio di buffer
+    // perangkat, penyebab bunyi "crack" saat dipotong) -> muat lagu baru dalam keadaan senyap -> fade-in.
+    const FADE_OUT_MS = 180
+    const SILENCE_MS = 140
+
     function startLoad(track, start = 0) {
         if (!ytPlayer || !isReady.value) return
-        loadedVideoId = track.video_id
+        clearTimeout(loadTimer)
+        loadTimer = null
         const load = () => {
+            loadTimer = null
+            loadedVideoId = track.video_id
+            userPaused = false
             pendingFadeIn = !document.hidden
             applyVol(pendingFadeIn ? 0 : volume.value)
             ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: start })
         }
-        if (isPlaying.value && !document.hidden) fade(liveVol, 0, 120, load)
-        else load()
+        if (isPlaying.value && !document.hidden) {
+            fade(liveVol, 0, FADE_OUT_MS, () => {
+                loadTimer = setTimeout(load, SILENCE_MS)
+            })
+        } else {
+            load()
+        }
     }
 
     // Putar lagu & set antrean
@@ -427,9 +525,11 @@ export const usePlayerStore = defineStore('player', () => {
             return
         }
         if (isPlaying.value) {
-            restoreVolume() // jangan sampai volume tertinggal rendah bila dijeda saat fade
+            userPaused = true
             ytPlayer.pauseVideo()
+            restoreVolume() // setelah dijeda; volume tidak boleh tertinggal rendah bila dijeda saat fade
         } else {
+            userPaused = false
             ytPlayer.playVideo()
         }
     }
@@ -474,6 +574,7 @@ export const usePlayerStore = defineStore('player', () => {
         if (idx === -1) {
             // Akhir antrean tanpa "ulangi semua": berhenti dan kembali ke awal lagu
             isPlaying.value = false
+            setKeepAlive(false)
             setPlaybackState('paused')
             currentTime.value = 0
             if (ytPlayer && isReady.value) ytPlayer.stopVideo()
@@ -550,6 +651,7 @@ export const usePlayerStore = defineStore('player', () => {
                 setPlaybackState('paused')
                 currentTime.value = 0
                 duration.value = 0
+                setKeepAlive(false)
                 if (ytPlayer && isReady.value) ytPlayer.stopVideo()
                 loadedVideoId = ''
             } else {
