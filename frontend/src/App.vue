@@ -561,11 +561,13 @@ onMounted(() => {
   player.searchMusic('Top Hits Indonesia')
   window.addEventListener('keydown', onKey)
   window.addEventListener('popstate', onPopState)
+  setupExitGuard()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('popstate', onPopState)
+  clearTimeout(exitTimer)
   teardownPwa()
   clearTimeout(debounceTimer)
   if (lyricsAbort) lyricsAbort.abort()
@@ -1077,12 +1079,35 @@ watch(openLayerCount, (n, o) => {
   }
 })
 
+// Penjaga beranda: satu entri history tambahan di bawah halaman agar back pertama bisa kita tangkap
+let exitArmed = false
+let exitTimer = null
+function setupExitGuard() {
+  if (!isStandalone) return
+  if (history.state?.layer) history.replaceState({ root: true }, '')
+  else if (!history.state?.root) history.pushState({ root: true }, '')
+}
+
 function onPopState() {
   if (skipPops > 0) {
     skipPops--
     return
   }
-  if (pushedStates <= 0) return // tidak ada lapisan: biarkan back keluar seperti biasa
+  if (pushedStates <= 0) {
+    // Tidak ada lapisan terbuka = back di beranda. Saat terpasang sebagai PWA: ketuk dua kali untuk keluar
+    if (!isStandalone) return
+    if (exitArmed) {
+      exitArmed = false
+      clearTimeout(exitTimer)
+      history.back() // keluar dari aplikasi
+      return
+    }
+    exitArmed = true
+    notify('Ketuk sekali lagi untuk keluar')
+    history.pushState({ root: true }, '') // pasang kembali penjaga di bawah halaman
+    exitTimer = setTimeout(() => (exitArmed = false), 2000)
+    return
+  }
   pushedStates--
   const top = layers.find(l => l.open())
   if (top) {
