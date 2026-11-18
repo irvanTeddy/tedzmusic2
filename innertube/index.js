@@ -62,36 +62,37 @@ app.get('/search', async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINT BARU: MENGAMBIL AUDIO MURNI (FIXED)
+// ENDPOINT BARU: MENGAMBIL AUDIO MURNI (FIXED - MP4 AAC)
 // ==========================================
 app.get('/stream', async (req, res) => {
     try {
         const videoId = req.query.id;
         if (!videoId) return res.status(400).json({ error: 'ID lagu tidak diberikan' });
 
-        // 1. Dapatkan info lagu dari YouTube untuk tahu format aslinya
+        // 1. Dapatkan info lagu dari YouTube
         const info = await yt.getBasicInfo(videoId);
-        const format = info.chooseFormat({ type: 'audio', quality: 'best' });
+        
+        // 2. PAKSA pilih format MP4 (AAC) karena paling kompatibel untuk semua HP & Browser
+        const format = info.chooseFormat({ type: 'audio', format: 'mp4', quality: 'best' });
 
         if (!format) {
             return res.status(404).json({ error: 'Format audio tidak ditemukan' });
         }
 
-        // 2. Download aliran audio sesuai setelan terbaik
+        // 3. Berikan informasi LENGKAP ke browser (Tipe File + Codec + Ukuran File)
+        res.setHeader('Content-Type', format.mime_type); // Contoh: audio/mp4; codecs="mp4a.40.2"
+        if (format.content_length) {
+            res.setHeader('Content-Length', format.content_length);
+        }
+
+        // 4. Download dari YouTube dengan setelan yang sama
         const stream = await yt.download(videoId, {
             type: 'audio',
-            quality: 'best',
-            format: 'any' // Biarkan YouTube mengirim format aslinya
+            format: 'mp4',
+            quality: 'best'
         });
 
-        // 3. Ambil tipe MIME asli (misal: 'audio/mp4' atau 'audio/webm')
-        const mimeType = format.mime_type ? format.mime_type.split(';')[0] : 'audio/mp4';
-        
-        // 4. Beri tahu browser tipe data yang BENAR
-        res.setHeader('Content-Type', mimeType);
-        res.setHeader('Transfer-Encoding', 'chunked');
-
-        // Alirkan ke HP pengguna
+        // 5. Alirkan perlahan ke browser
         for await (const chunk of stream) {
             res.write(chunk);
         }
