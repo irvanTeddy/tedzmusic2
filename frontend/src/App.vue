@@ -560,10 +560,12 @@ onMounted(() => {
   player.initYouTubePlayer('yt-hidden-player')
   player.searchMusic('Top Hits Indonesia')
   window.addEventListener('keydown', onKey)
+  window.addEventListener('popstate', onPopState)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('popstate', onPopState)
   teardownPwa()
   clearTimeout(debounceTimer)
   if (lyricsAbort) lyricsAbort.abort()
@@ -1033,6 +1035,60 @@ function npTouchCancel() {
   gMode = ''
   sheetDragging.value = false
   sheetDrag.value = 0
+}
+
+/* ==========================================================
+   TOMBOL BACK (HP / PWA): menutup lapisan paling atas, bukan keluar dari aplikasi
+   ========================================================== */
+// Urutan = prioritas penutupan (paling atas ditutup lebih dulu)
+const layers = [
+  { open: () => !!dialog.value, close: () => (dialog.value = null) },
+  { open: () => !!pickerTrack.value, close: () => (pickerTrack.value = null) },
+  { open: () => showSleep.value, close: () => (showSleep.value = false) },
+  { open: () => showQueue.value, close: () => (showQueue.value = false) },
+  { open: () => showLyrics.value, close: () => (showLyrics.value = false) },
+  { open: () => showNowPlaying.value, close: () => closeNowPlaying() },
+  // Hapus baris ini bila back dari tab koleksi tidak perlu kembali ke Jelajahi
+  { open: () => activeTab.value !== 'explore', close: () => (activeTab.value = 'explore') }
+]
+const openLayerCount = computed(() => layers.filter(l => l.open()).length)
+
+let pushedStates = 0 // entri history yang kita tambahkan
+let skipPops = 0 // popstate hasil history.go() buatan kita sendiri
+let closingFromBack = false
+
+// Tiap lapisan yang terbuka menambah satu entri history. Ditutup lewat tombol X / Esc,
+// entri itu dibuang lagi supaya history tetap sinkron.
+watch(openLayerCount, (n, o) => {
+  if (n > o) {
+    for (let i = o; i < n; i++) {
+      history.pushState({ layer: true }, '')
+      pushedStates++
+    }
+  } else if (closingFromBack) {
+    closingFromBack = false
+  } else {
+    const steps = Math.min(o - n, pushedStates)
+    if (steps > 0) {
+      pushedStates -= steps
+      skipPops++
+      history.go(-steps)
+    }
+  }
+})
+
+function onPopState() {
+  if (skipPops > 0) {
+    skipPops--
+    return
+  }
+  if (pushedStates <= 0) return // tidak ada lapisan: biarkan back keluar seperti biasa
+  pushedStates--
+  const top = layers.find(l => l.open())
+  if (top) {
+    closingFromBack = true
+    top.close()
+  }
 }
 
 /* ==========================================================
