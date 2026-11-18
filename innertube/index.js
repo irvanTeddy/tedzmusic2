@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { Innertube, UniversalCache } from 'youtubei.js';
-import { Readable } from 'stream'; // <-- TAMBAHAN BARU UNTUK BIKIN PIPA
+import { Readable } from 'stream'; // Wajib untuk bikin pipa anti-lemot
 
 const app = express();
 const PORT = 3001;
@@ -63,7 +63,7 @@ app.get('/search', async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINT BARU: EFFICIENT PROXY PIPING
+// ENDPOINT BARU: JURUS HACKER (VIDEO-TO-AUDIO PIPING)
 // ==========================================
 app.get('/stream', async (req, res) => {
     try {
@@ -71,22 +71,30 @@ app.get('/stream', async (req, res) => {
         if (!videoId) return res.status(400).json({ error: 'ID lagu tidak diberikan' });
 
         const info = await yt.getBasicInfo(videoId);
-        const format = info.chooseFormat({ type: 'audio', format: 'mp4', quality: 'best' });
+        
+        // RAHASIA UTAMA: Kita ambil format ITAG 18 (Video MP4 360p)
+        // Format ini BUKAN DASH, jadi 10.000% pasti bunyi di HP Android/iOS manapun!
+        let format = info.formats.find(f => f.itag === 18); 
+        
+        // Cadangan kalau format 360p gak ada (jarang terjadi)
+        if (!format) {
+            format = info.formats.find(f => f.has_audio && f.has_video && f.container === 'mp4');
+        }
 
         if (!format || !format.url) {
-            return res.status(404).json({ error: 'Format audio tidak ditemukan' });
+            return res.status(404).json({ error: 'Format standar tidak ditemukan' });
         }
 
-        // 1. Siapkan corong minta ke YouTube
+        // Siapkan header (Teruskan fitur geser-geser durasi dari HP ke YouTube)
         const fetchHeaders = {};
         if (req.headers.range) {
-            fetchHeaders.Range = req.headers.range; // Teruskan permintaan "seek" dari HP
+            fetchHeaders.Range = req.headers.range;
         }
 
-        // 2. Buka keran dari YouTube
+        // Buka keran dari YouTube
         const ytRes = await fetch(format.url, { headers: fetchHeaders });
 
-        // 3. Info ke HP: "Ini lagunya mulai ngalir ya"
+        // Tembak header balik ke HP pengguna
         res.status(ytRes.status);
         const headersToPass = ['content-type', 'content-length', 'content-range', 'accept-ranges'];
         headersToPass.forEach(h => {
@@ -95,10 +103,10 @@ app.get('/stream', async (req, res) => {
             }
         });
 
-        // 4. SAMBUNGKAN PIPA: YouTube -> VPS -> HP (Otomatis & Aman dari Memory Leak)
+        // SAMBUNGKAN PIPA: YouTube -> VPS -> HP (RAM VPS AMAN 100%)
         Readable.fromWeb(ytRes.body).pipe(res);
 
-        // 5. Kalau aplikasi di HP ditutup, matikan keran biar kuota VPS hemat!
+        // Kalau tab ditutup, matikan keran!
         req.on('close', () => {
             res.end();
         });
