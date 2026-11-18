@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import { Innertube, UniversalCache } from 'youtubei.js';
-import { Readable } from 'stream'; // Wajib untuk bikin pipa anti-lemot
 
 const app = express();
 const PORT = 3001;
@@ -61,64 +60,6 @@ app.get('/search', async (req, res) => {
         res.status(500).json({ error: error.message, data: [] });
     }
 });
-
-// ==========================================
-// ENDPOINT BARU: JURUS HACKER (VIDEO-TO-AUDIO PIPING)
-// ==========================================
-app.get('/stream', async (req, res) => {
-    try {
-        const videoId = req.query.id;
-        if (!videoId) return res.status(400).json({ error: 'ID lagu tidak diberikan' });
-
-        const info = await yt.getBasicInfo(videoId);
-        
-        // RAHASIA UTAMA: Kita ambil format ITAG 18 (Video MP4 360p)
-        // Format ini BUKAN DASH, jadi 10.000% pasti bunyi di HP Android/iOS manapun!
-        let format = info.formats.find(f => f.itag === 18); 
-        
-        // Cadangan kalau format 360p gak ada (jarang terjadi)
-        if (!format) {
-            format = info.formats.find(f => f.has_audio && f.has_video && f.container === 'mp4');
-        }
-
-        if (!format || !format.url) {
-            return res.status(404).json({ error: 'Format standar tidak ditemukan' });
-        }
-
-        // Siapkan header (Teruskan fitur geser-geser durasi dari HP ke YouTube)
-        const fetchHeaders = {};
-        if (req.headers.range) {
-            fetchHeaders.Range = req.headers.range;
-        }
-
-        // Buka keran dari YouTube
-        const ytRes = await fetch(format.url, { headers: fetchHeaders });
-
-        // Tembak header balik ke HP pengguna
-        res.status(ytRes.status);
-        const headersToPass = ['content-type', 'content-length', 'content-range', 'accept-ranges'];
-        headersToPass.forEach(h => {
-            if (ytRes.headers.has(h)) {
-                res.setHeader(h, ytRes.headers.get(h));
-            }
-        });
-
-        // SAMBUNGKAN PIPA: YouTube -> VPS -> HP (RAM VPS AMAN 100%)
-        Readable.fromWeb(ytRes.body).pipe(res);
-
-        // Kalau tab ditutup, matikan keran!
-        req.on('close', () => {
-            res.end();
-        });
-
-    } catch (error) {
-        console.error('Stream error:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ error: 'Gagal mengambil audio' });
-        }
-    }
-});
-// ==========================================
 
 initYouTube().then(() => {
     app.listen(PORT, () => {
