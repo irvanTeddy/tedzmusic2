@@ -22,6 +22,19 @@ function writeJson(key, value) {
     }
 }
 
+// Naikkan resolusi cover. Alamat YouTube Music (googleusercontent / ggpht) membawa parameter
+// ukuran di ujungnya, misalnya "=w60-h60-l90-rj"; kita minta ukuran yang jauh lebih besar.
+function hdThumb(url, size = 720) {
+    if (!url || typeof url !== 'string') return url
+    if (/(googleusercontent|ggpht)\.com/i.test(url)) {
+        return url.replace(/=(w\d+-h\d+|s\d+)[^/=]*$/i, `=w${size}-h${size}-l90-rj`)
+    }
+    // Thumbnail video YouTube yang kecil -> versi 480x360 (hampir selalu tersedia)
+    return url.replace(/(\/vi(?:_webp)?\/[^/]+\/)(?:default|mqdefault)(\.\w+)/i, '$1hqdefault$2')
+}
+const hdTrack = t => (t && t.thumbnail_url ? { ...t, thumbnail_url: hdThumb(t.thumbnail_url) } : t)
+const hdList = list => (Array.isArray(list) ? list.map(hdTrack) : [])
+
 export const usePlayerStore = defineStore('player', () => {
     // State katalog & pencarian
     const searchQuery = ref('')
@@ -31,7 +44,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     // Sesi terakhir (antrean, lagu, posisi) dipulihkan saat aplikasi dibuka lagi
     const saved = readJson('player_session', null)
-    const savedQueue = Array.isArray(saved?.queue) ? saved.queue : []
+    const savedQueue = hdList(saved?.queue)
     const savedIndex = Number.isInteger(saved?.index) && saved.index >= 0 && saved.index < savedQueue.length ? saved.index : -1
 
     // State antrean & pemutaran
@@ -55,9 +68,11 @@ export const usePlayerStore = defineStore('player', () => {
     let shuffleStarted = false // false = kantong acak belum dikocok untuk antrean ini
 
     // Koleksi lokal (disimpan di localStorage agar persisten)
-    const likedTracks = ref(readJson('liked_tracks', []))
-    const recentTracks = ref(readJson('recent_tracks', []))
-    const playlists = ref(readJson('playlists', []))
+    const likedTracks = ref(hdList(readJson('liked_tracks', [])))
+    const recentTracks = ref(hdList(readJson('recent_tracks', [])))
+    const playlists = ref(
+        readJson('playlists', []).map(p => ({ ...p, tracks: hdList(p.tracks) }))
+    )
 
     // Instance YouTube Player
     let ytPlayer = null
@@ -94,26 +109,105 @@ export const usePlayerStore = defineStore('player', () => {
         errorTimer = setTimeout(() => (playbackError.value = null), 5000)
     }
 
-    /* ---------- Kontrol Media Lock Screen HP & Tombol Media Keyboard ---------- */
-    function updateMediaSession(track) {
-        if (!('mediaSession' in navigator) || !track) return
+    /* ---------- Volume: fade halus agar pergantian lagu tidak "crack" ---------- */
+    let liveVol = volume.value // volume yang benar-benar sedang dipakai pemutar
+    let fadeTimer = null
+    let pendingFadeIn = false // lagu baru dimulai senyap, lalu dinaikkan perlahan
 
+    function applyVol(v) {
+        liveVol = v
+        if (ytPlayer && isReady.value) ytPlayer.setVolume(v)
+    }
+
+    function clearFade() {
+        clearInterval(fadeTimer)
+        fadeTimer = null
+    }
+
+    function fade(from, to, ms, done) {
+        clearFade()
+        if (!ytPlayer || !isReady.value) return done?.()
+        // Tab di latar belakang: browser memperlambat timer, jadi lewati animasi
+        if (document.hidden || ms <= 0) {
+            applyVol(to)
+            return done?.()
+        }
+        const steps = Math.max(1, Math.round(ms / 20))
+        let i = 0
+        fadeTimer = setInterval(() => {
+            i++
+            applyVol(Math.round(from + ((to - from) * i) / steps))
+            if (i >= steps) {
+                clearFade()
+                done?.()
+            }
+        }, 20)
+    }
+
+    // Kembalikan volume ke pengaturan pengguna (jeda, error, atau lagu selesai)
+    function restoreVolume() {
+        clearFade()
+        pendingFadeIn = false
+        applyVol(volume.value)
+    }
+
+    /* ---------- Media Session: kontrol layar kunci / notifikasi ---------- */
+    function updateMediaMetadata(track) {
+        if (!('mediaSession' in navigator) || !track) return
+        const src = track.thumbnail_url
         navigator.mediaSession.metadata = new MediaMetadata({
             title: track.title,
             artist: track.artist,
             album: 'TedzMusic',
-            artwork: track.thumbnail_url
-                ? [{ src: track.thumbnail_url, sizes: '512x512', type: 'image/jpeg' }]
+            artwork: src
+                ? [96, 192, 256, 384, 512].map(n => ({ src, sizes: `${n}x${n}` }))
                 : []
         })
+    }
 
-        navigator.mediaSession.setActionHandler('play', () => togglePlay())
-        navigator.mediaSession.setActionHandler('pause', () => togglePlay())
-        navigator.mediaSession.setActionHandler('previoustrack', () => playPrev())
-        navigator.mediaSession.setActionHandler('nexttrack', () => playNext())
-        navigator.mediaSession.setActionHandler('seekto', (details) => {
-            if (details.seekTime !== undefined) seekTo(details.seekTime)
+    // Cukup dipanggil saat lagu mulai & setelah geser; browser menggerakkan bilahnya sendiri.
+    // (Dipanggil tiap detik dari timer justru macet di latar belakang.)
+    function syncPositionState() {
+        if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return
+        const d = duration.value
+        if (!d || !Number.isFinite(d)) return
+        try {
+            navigator.mediaSession.setPositionState({
+                duration: d,
+                position: Math.min(Math.max(currentTime.value, 0), d),
+                playbackRate: 1
+            })
+        } catch {
+            /* nilai tidak valid: abaikan */
+        }
+    }
+
+    function setPlaybackState(state) {
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = state
+    }
+
+    function setupMediaHandlers() {
+        if (!('mediaSession' in navigator)) return
+        const set = (action, fn) => {
+            try {
+                navigator.mediaSession.setActionHandler(action, fn)
+            } catch {
+                /* aksi tidak didukung browser ini */
+            }
+        }
+        set('play', () => {
+            if (!isPlaying.value) togglePlay()
         })
+        set('pause', () => {
+            if (isPlaying.value) togglePlay()
+        })
+        set('previoustrack', () => playPrev())
+        set('nexttrack', () => playNext())
+        set('seekto', d => {
+            if (d.seekTime != null) seekTo(d.seekTime)
+        })
+        set('seekbackward', d => seekTo(Math.max(0, currentTime.value - (d.seekOffset || 10))))
+        set('seekforward', d => seekTo(Math.min(duration.value || 0, currentTime.value + (d.seekOffset || 10))))
     }
 
     // Inisialisasi Headless YouTube IFrame API
@@ -149,35 +243,40 @@ export const usePlayerStore = defineStore('player', () => {
             events: {
                 onReady: (event) => {
                     isReady.value = true
-                    event.target.setVolume(volume.value)
+                    applyVol(volume.value)
+                    setupMediaHandlers()
+                    if (currentTrack.value) updateMediaMetadata(currentTrack.value)
                 },
                 onStateChange: (event) => {
                     // 1 = PLAYING, 2 = PAUSED, 0 = ENDED
                     if (event.data === window.YT.PlayerState.PLAYING) {
                         errorStreak = 0
                         isPlaying.value = true
-                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
-                        
-                        // KEMBALIKAN VOLUME SETELAH LAGU MULAI JALAN (Bypass pop sound)
-                        if (!isMuted.value) {
-                            ytPlayer.unMute()
-                            ytPlayer.setVolume(volume.value)
-                        }
-
                         duration.value = ytPlayer.getDuration() || currentTrack.value?.duration || 0
+                        currentTime.value = ytPlayer.getCurrentTime() || currentTime.value
+                        setPlaybackState('playing')
+                        syncPositionState()
+                        if (pendingFadeIn) {
+                            // Lagu baru sudah benar-benar mulai: naikkan volume perlahan
+                            pendingFadeIn = false
+                            fade(liveVol, volume.value, 250)
+                        }
                         startProgressLoop()
                     } else if (event.data === window.YT.PlayerState.PAUSED) {
                         isPlaying.value = false
-                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+                        currentTime.value = ytPlayer.getCurrentTime() || currentTime.value
+                        setPlaybackState('paused')
+                        syncPositionState()
                         stopProgressLoop()
                         saveSession()
                     } else if (event.data === window.YT.PlayerState.ENDED) {
                         stopProgressLoop()
+                        restoreVolume()
                         if (stopAfterTrack.value) {
                             // Timer tidur "akhir lagu ini": berhenti di sini
                             stopAfterTrack.value = false
                             isPlaying.value = false
-                            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+                            setPlaybackState('paused')
                             currentTime.value = 0
                             loadedVideoId = ''
                             saveSession()
@@ -196,12 +295,13 @@ export const usePlayerStore = defineStore('player', () => {
                 },
                 onError: (e) => {
                     console.error('YouTube Player Error:', e.data)
+                    restoreVolume()
                     errorStreak++
                     // Beberapa lagu berturut-turut gagal: berhenti, jangan melompat tanpa akhir
                     if (errorStreak >= 3 || queue.value.length <= 1) {
                         errorStreak = 0
                         isPlaying.value = false
-                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+                        setPlaybackState('paused')
                         stopProgressLoop()
                         flashError('Lagu tidak bisa diputar. Coba lagu lain atau periksa koneksi internetmu.')
                         return
@@ -246,7 +346,7 @@ export const usePlayerStore = defineStore('player', () => {
                 params: { q: query },
                 timeout: 12000
             })
-            tracks.value = res.data.data || []
+            tracks.value = hdList(res.data.data || [])
         } catch (err) {
             console.error('Gagal mencari lagu:', err)
             searchError.value =
@@ -265,6 +365,19 @@ export const usePlayerStore = defineStore('player', () => {
     function pushRecent(track) {
         recentTracks.value = [track, ...recentTracks.value.filter(t => t.video_id !== track.video_id)].slice(0, 12)
         writeJson('recent_tracks', recentTracks.value)
+    }
+
+    // Muat sebuah lagu ke pemutar YouTube: redam yang sedang bunyi, muat, lalu naikkan perlahan
+    function startLoad(track, start = 0) {
+        if (!ytPlayer || !isReady.value) return
+        loadedVideoId = track.video_id
+        const load = () => {
+            pendingFadeIn = !document.hidden
+            applyVol(pendingFadeIn ? 0 : volume.value)
+            ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: start })
+        }
+        if (isPlaying.value && !document.hidden) fade(liveVol, 0, 120, load)
+        else load()
     }
 
     // Putar lagu & set antrean
@@ -293,35 +406,18 @@ export const usePlayerStore = defineStore('player', () => {
         pushRecent(track)
         currentTime.value = 0
         duration.value = track.duration || 0
-        updateMediaSession(track)
+        updateMediaMetadata(track)
         saveSession()
 
-        if (ytPlayer && isReady.value) {
-            loadedVideoId = track.video_id
-            
-            ytPlayer.mute() // Mute secara instan sebelum potong audio
-            ytPlayer.stopVideo() // Bersihkan sisa lagu sebelumnya
-            
-            // Beri jeda 150ms agar Iframe bungkam sebelum memuat lagu baru
-            setTimeout(() => {
-                ytPlayer.loadVideoById({ videoId: track.video_id, startSeconds: 0 })
-            }, 150)
-        }
+        startLoad(track, 0)
     }
 
     // Muat lagu yang sedang aktif (mis. sesi yang dipulihkan) mulai dari posisi tertentu
     function loadCurrent(start = 0) {
         const t = currentTrack.value
         if (!t || !ytPlayer || !isReady.value) return
-        updateMediaSession(t)
-        loadedVideoId = t.video_id
-        
-        ytPlayer.mute() 
-        ytPlayer.stopVideo() // Bersihkan sisa lagu sebelumnya
-        
-        setTimeout(() => {
-            ytPlayer.loadVideoById({ videoId: t.video_id, startSeconds: start })
-        }, 150)
+        updateMediaMetadata(t)
+        startLoad(t, start)
     }
 
     function togglePlay() {
@@ -331,6 +427,7 @@ export const usePlayerStore = defineStore('player', () => {
             return
         }
         if (isPlaying.value) {
+            restoreVolume() // jangan sampai volume tertinggal rendah bila dijeda saat fade
             ytPlayer.pauseVideo()
         } else {
             ytPlayer.playVideo()
@@ -377,7 +474,7 @@ export const usePlayerStore = defineStore('player', () => {
         if (idx === -1) {
             // Akhir antrean tanpa "ulangi semua": berhenti dan kembali ke awal lagu
             isPlaying.value = false
-            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+            setPlaybackState('paused')
             currentTime.value = 0
             if (ytPlayer && isReady.value) ytPlayer.stopVideo()
             loadedVideoId = ''
@@ -450,7 +547,7 @@ export const usePlayerStore = defineStore('player', () => {
             if (!queue.value.length) {
                 currentIndex.value = -1
                 isPlaying.value = false
-                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
+                setPlaybackState('paused')
                 currentTime.value = 0
                 duration.value = 0
                 if (ytPlayer && isReady.value) ytPlayer.stopVideo()
@@ -535,17 +632,18 @@ export const usePlayerStore = defineStore('player', () => {
         }
         ytPlayer.seekTo(seconds, true)
         currentTime.value = seconds
+        syncPositionState()
     }
 
     function setVolume(val) {
+        clearFade()
+        pendingFadeIn = false
         volume.value = Number(val)
         localStorage.setItem('player_volume', String(volume.value))
-        if (ytPlayer && isReady.value) {
-            ytPlayer.setVolume(volume.value)
-            if (volume.value > 0 && isMuted.value) {
-                ytPlayer.unMute()
-                isMuted.value = false
-            }
+        applyVol(volume.value)
+        if (ytPlayer && isReady.value && volume.value > 0 && isMuted.value) {
+            ytPlayer.unMute()
+            isMuted.value = false
         }
     }
 
